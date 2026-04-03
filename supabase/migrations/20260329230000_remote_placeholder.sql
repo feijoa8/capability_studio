@@ -1,0 +1,2 @@
+-- Placeholder migration to align local history with remote.
+-- Remote version 20260329230000 already exists in Supabase.

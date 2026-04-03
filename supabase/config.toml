@@ -1,0 +1,8 @@
+# https://supabase.com/docs/guides/cli/config
+# Run `supabase link` to set project_id for deploy.
+
+[functions.refine-job-profile]
+verify_jwt = false
+
+[functions.generate-practice-model]
+verify_jwt = false
