@@ -1,51 +1,23 @@
 import { supabase } from "./supabase";
+import { toHierarchyCompanyProfilePayload } from "./organisationProfileMaps";
 import type { OrganisationProfileRow } from "../pages/hub/types";
 
+/** Pass 1: role description / purpose refinement only. */
 export type JobProfileRefinementInput = {
   companyProfile: OrganisationProfileRow | null;
   jobTitle: string;
   levelName: string | null;
-  /** Existing narrative (e.g. role_summary) when present */
+  /** Job family display name when assigned */
+  familyName: string | null;
+  /** Existing narrative (role_summary) when present */
   description: string | null;
   responsibilities: string[];
+  requirements: string[];
 };
 
 export type JobProfileRefinementResult = {
   refined_role_summary: string;
-  improved_responsibilities: string[];
-  suggested_requirements: string[];
-  suggested_capabilities: string[];
 };
-
-/** Subset sent to Edge Function `refine-job-profile` */
-type RefineJobProfileCompanyPayload = {
-  sector: string | null;
-  industry: string | null;
-  summary: string | null;
-  business_purpose: string | null;
-  strategic_priorities: string | null;
-  delivery_context: string | null;
-  capability_emphasis: string | null;
-  role_interpretation_guidance: string | null;
-  terminology_guidance: string | null;
-};
-
-function mapCompanyProfile(
-  row: OrganisationProfileRow | null,
-): RefineJobProfileCompanyPayload | null {
-  if (!row) return null;
-  return {
-    sector: row.sector ?? null,
-    industry: row.industry ?? null,
-    summary: row.summary ?? null,
-    business_purpose: row.business_purpose ?? null,
-    strategic_priorities: row.strategic_priorities ?? null,
-    delivery_context: row.delivery_context ?? null,
-    capability_emphasis: row.capability_emphasis ?? null,
-    role_interpretation_guidance: row.role_interpretation_guidance ?? null,
-    terminology_guidance: row.terminology_guidance ?? null,
-  };
-}
 
 function parseRefinementResult(data: unknown): JobProfileRefinementResult {
   if (!data || typeof data !== "object") {
@@ -56,27 +28,10 @@ function parseRefinementResult(data: unknown): JobProfileRefinementResult {
     typeof o.refined_role_summary === "string"
       ? o.refined_role_summary.trim()
       : "";
-  const ir = o.improved_responsibilities;
-  const req = o.suggested_requirements;
-  const sc = o.suggested_capabilities;
   if (!refined_role_summary) {
     throw new Error("Refinement response missing refined_role_summary.");
   }
-  if (!Array.isArray(ir) || !ir.every((x) => typeof x === "string")) {
-    throw new Error("Refinement response missing improved_responsibilities.");
-  }
-  if (!Array.isArray(req) || !req.every((x) => typeof x === "string")) {
-    throw new Error("Refinement response missing suggested_requirements.");
-  }
-  if (!Array.isArray(sc) || !sc.every((x) => typeof x === "string")) {
-    throw new Error("Refinement response missing suggested_capabilities.");
-  }
-  return {
-    refined_role_summary,
-    improved_responsibilities: ir.map((s) => s.trim()).filter(Boolean),
-    suggested_requirements: req.map((s) => s.trim()).filter(Boolean),
-    suggested_capabilities: sc.map((s) => s.trim()).filter(Boolean),
-  };
+  return { refined_role_summary };
 }
 
 async function invokeErrorMessage(
@@ -140,12 +95,14 @@ export async function refineJobProfileWithCompanyContext(
         Authorization: `Bearer ${accessToken}`,
       },
       body: {
-        companyProfile: mapCompanyProfile(input.companyProfile),
+        companyProfile: toHierarchyCompanyProfilePayload(input.companyProfile),
         jobProfile: {
           title: input.jobTitle,
           level: input.levelName,
+          job_family: input.familyName,
           role_summary: input.description,
           responsibilities: input.responsibilities,
+          requirements: input.requirements,
         },
       },
     },

@@ -1,0 +1,47 @@
+/* Responsive shell for My Career: evidence vs planning columns on wide viewports. */
+
+.shell {
+  max-width: 1100px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.grid {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+@media (min-width: 960px) {
+  .grid {
+    /* Right column slightly wider for planning inputs */
+    grid-template-columns: minmax(320px, 1fr) minmax(460px, 1.35fr);
+  }
+}
+
+@media (min-width: 960px) {
+  .gridSingle {
+    grid-template-columns: 1fr;
+  }
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+}
+
+.colLabel {
+  display: none;
+  min-width: 0;
+}
+
+@media (min-width: 960px) {
+  .colLabel {
+    display: block;
+  }
+}
+

@@ -33,3 +33,13 @@ export function isAssignableLifecycleStatus(
 ): boolean {
   return parseLifecycleStatus(status) === "active";
 }
+
+/**
+ * Exclude archived competencies from working flows (e.g. AI refinement) even when
+ * “Show archived” is on and archived rows are loaded for restore/review.
+ */
+export function excludeArchivedCompetencies<T extends { status?: string | null }>(
+  rows: T[]
+): T[] {
+  return rows.filter((c) => parseLifecycleStatus(c.status) !== "archived");
+}

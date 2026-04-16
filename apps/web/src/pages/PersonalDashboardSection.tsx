@@ -19,12 +19,15 @@ import {
   type OrgUserCompetencyRow,
 } from "./hub/competencyComparison";
 import { OrganisationLinkedInsightsPanel } from "./OrganisationLinkedInsightsPanel";
+import { AccordionCollapsible } from "./hub/AccordionCollapsible";
 import {
   accent,
   accentMuted,
   bg,
   border,
+  borderSubtle,
   btn,
+  btnGhost,
   gapTriPillStyle,
   muted,
   mutedColor,
@@ -112,6 +115,19 @@ export function PersonalDashboardSection({
   const [welcomeName, setWelcomeName] = useState<string>("there");
   const [roleTitle, setRoleTitle] = useState<string | null>(null);
   const [roleLevel, setRoleLevel] = useState<string | null>(null);
+  const [assignedJobProfileId, setAssignedJobProfileId] = useState<
+    string | null
+  >(null);
+  const [roleSummaryText, setRoleSummaryText] = useState<string | null>(null);
+  const [dashResponsibilities, setDashResponsibilities] = useState<string[]>(
+    [],
+  );
+  const [dashRequirements, setDashRequirements] = useState<string[]>([]);
+  const [dashSkills, setDashSkills] = useState<string[]>([]);
+  const [rolePurposeExpanded, setRolePurposeExpanded] = useState(false);
+  const [dashOpenResp, setDashOpenResp] = useState(false);
+  const [dashOpenReq, setDashOpenReq] = useState(false);
+  const [dashOpenSkills, setDashOpenSkills] = useState(false);
   const [completionPct, setCompletionPct] = useState<number | null>(null);
   const [companyCompCount, setCompanyCompCount] = useState<number>(0);
   const [roleCompCount, setRoleCompCount] = useState<number>(0);
@@ -144,6 +160,13 @@ export function PersonalDashboardSection({
     }
     return by;
   }, [levelDefsList]);
+
+  useEffect(() => {
+    setRolePurposeExpanded(false);
+    setDashOpenResp(false);
+    setDashOpenReq(false);
+    setDashOpenSkills(false);
+  }, [assignedJobProfileId]);
 
   const fetchDevelopmentSummary = useCallback(async (orgId: string, uid: string) => {
     const [backlogRes, activeRes, completedRes] = await Promise.all([
@@ -283,10 +306,16 @@ export function PersonalDashboardSection({
       console.error(ujpRes.error);
       setRoleTitle(null);
       setRoleLevel(null);
+      setAssignedJobProfileId(null);
+      setRoleSummaryText(null);
+      setDashResponsibilities([]);
+      setDashRequirements([]);
+      setDashSkills([]);
     } else {
       jobId =
         (ujpRes.data as { job_profile_id: string | null } | null)
           ?.job_profile_id ?? null;
+      setAssignedJobProfileId(jobId);
     }
 
     let reqRows: JobRequirementRow[] = [];
@@ -294,24 +323,81 @@ export function PersonalDashboardSection({
     let jpLevel: string | null = null;
 
     if (jobId) {
-      const [jpRes, reqRes] = await Promise.all([
-        supabase
-          .from("job_profiles")
-          .select("title, level_name")
-          .eq("id", jobId)
-          .maybeSingle(),
-        supabase
-          .from("job_profile_competencies")
-          .select(
-            "competency_id, required_level, is_required, relevance, competencies ( id, name )"
-          )
-          .eq("job_profile_id", jobId),
-      ]);
+      const [jpRes, reqRes, respHrRes, reqHrRes, skillsHrRes] =
+        await Promise.all([
+          supabase
+            .from("job_profiles")
+            .select("title, level_name, role_summary")
+            .eq("id", jobId)
+            .maybeSingle(),
+          supabase
+            .from("job_profile_competencies")
+            .select(
+              "competency_id, required_level, is_required, relevance, competencies ( id, name )"
+            )
+            .eq("job_profile_id", jobId),
+          supabase
+            .from("job_profile_responsibilities")
+            .select("description")
+            .eq("job_profile_id", jobId)
+            .order("order_index", { ascending: true }),
+          supabase
+            .from("job_profile_requirements")
+            .select("description")
+            .eq("job_profile_id", jobId)
+            .order("order_index", { ascending: true }),
+          supabase
+            .from("job_profile_skills")
+            .select("name")
+            .eq("job_profile_id", jobId)
+            .order("created_at", { ascending: true }),
+        ]);
 
       if (!jpRes.error && jpRes.data) {
-        const jp = jpRes.data as { title: string; level_name: string | null };
+        const jp = jpRes.data as {
+          title: string;
+          level_name: string | null;
+          role_summary?: string | null;
+        };
         jpTitle = jp.title;
         jpLevel = jp.level_name;
+        const rs = jp.role_summary?.trim();
+        setRoleSummaryText(rs ?? null);
+      } else {
+        setRoleSummaryText(null);
+      }
+
+      if (!respHrRes.error) {
+        setDashResponsibilities(
+          (respHrRes.data ?? [])
+            .map((r) => (r as { description: string }).description)
+            .filter((s) => typeof s === "string" && s.trim().length > 0),
+        );
+      } else {
+        console.error(respHrRes.error);
+        setDashResponsibilities([]);
+      }
+
+      if (!reqHrRes.error) {
+        setDashRequirements(
+          (reqHrRes.data ?? [])
+            .map((r) => (r as { description: string }).description)
+            .filter((s) => typeof s === "string" && s.trim().length > 0),
+        );
+      } else {
+        console.error(reqHrRes.error);
+        setDashRequirements([]);
+      }
+
+      if (!skillsHrRes.error) {
+        setDashSkills(
+          (skillsHrRes.data ?? [])
+            .map((r) => (r as { name: string }).name)
+            .filter((s) => typeof s === "string" && s.trim().length > 0),
+        );
+      } else {
+        console.error(skillsHrRes.error);
+        setDashSkills([]);
       }
       if (reqRes.error) {
         setLoadError((prev) =>
@@ -320,6 +406,15 @@ export function PersonalDashboardSection({
       } else {
         reqRows = normalizeJobRequirementRows(reqRes.data);
       }
+    }
+
+    if (!jobId) {
+      setRoleTitle(null);
+      setRoleLevel(null);
+      setRoleSummaryText(null);
+      setDashResponsibilities([]);
+      setDashRequirements([]);
+      setDashSkills([]);
     }
 
     setRoleTitle(jpTitle);
@@ -549,8 +644,26 @@ export function PersonalDashboardSection({
 
   if (!activeOrgId) {
     return (
-      <div style={{ ...muted, marginTop: 0 }}>
-        Select a workspace to see your dashboard.
+      <div
+        style={{
+          marginTop: 0,
+          maxWidth: 520,
+          fontSize: 15,
+          color: mutedColor,
+          lineHeight: 1.6,
+        }}
+      >
+        <p style={{ margin: "0 0 12px", fontWeight: 600, color: text }}>
+          Personal dashboard
+        </p>
+        <p style={{ margin: 0 }}>
+          Your overview, role focus, and competency snapshot load when you have an active
+          workspace. With a <strong style={{ color: text }}>Personal Account</strong> and no
+          workspace yet, open{" "}
+          <strong style={{ color: text }}>My Profile</strong> from the header to add your
+          details. To use a full organisation workspace, sign up with an organisation or ask
+          your admin to invite you.
+        </p>
       </div>
     );
   }
@@ -602,6 +715,11 @@ export function PersonalDashboardSection({
       : [];
 
   const atGoalCap = activeGoalsMinimal.length >= 5;
+
+  const ROLE_PURPOSE_COLLAPSE_AT = 220;
+  const rolePurposeTrimmed = roleSummaryText?.trim() ?? "";
+  const rolePurposeNeedsToggle =
+    rolePurposeTrimmed.length > ROLE_PURPOSE_COLLAPSE_AT;
 
   return (
     <div
@@ -686,6 +804,280 @@ export function PersonalDashboardSection({
           below first.
         </p>
       ) : null}
+
+      <section>
+        <p
+          style={{
+            margin: "0 0 8px",
+            fontSize: 11,
+            fontWeight: 600,
+            letterSpacing: "0.06em",
+            textTransform: "uppercase",
+            color: mutedColor,
+          }}
+        >
+          My Role Profile
+        </p>
+        {!assignedJobProfileId ? (
+          <p style={{ ...muted, margin: 0, fontSize: 14, lineHeight: 1.5 }}>
+            No role profile assigned yet.
+          </p>
+        ) : (
+          <div style={{ ...card }}>
+            <div style={{ marginBottom: 12 }}>
+              <div
+                style={{
+                  fontSize: 16,
+                  fontWeight: 600,
+                  color: text,
+                  letterSpacing: "-0.02em",
+                }}
+              >
+                {roleTitle ?? "—"}
+              </div>
+              <div style={{ fontSize: 13, color: mutedColor, marginTop: 4 }}>
+                Level {roleLevel ?? "—"}
+              </div>
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase",
+                  color: mutedColor,
+                  marginBottom: 6,
+                }}
+              >
+                Role purpose
+              </div>
+              {rolePurposeTrimmed ? (
+                <>
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: 14,
+                      color: text,
+                      lineHeight: 1.55,
+                      whiteSpace: "pre-wrap",
+                      ...(rolePurposeNeedsToggle && !rolePurposeExpanded
+                        ? {
+                            display: "-webkit-box",
+                            WebkitLineClamp: 4,
+                            WebkitBoxOrient: "vertical",
+                            overflow: "hidden",
+                          }
+                        : {}),
+                    }}
+                  >
+                    {rolePurposeTrimmed}
+                  </p>
+                  {rolePurposeNeedsToggle ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setRolePurposeExpanded((e) => !e)
+                      }
+                      style={{
+                        ...btnGhost,
+                        marginTop: 8,
+                        padding: "6px 12px",
+                        fontSize: 12,
+                      }}
+                    >
+                      {rolePurposeExpanded ? "Show less" : "Show more"}
+                    </button>
+                  ) : null}
+                </>
+              ) : (
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: 13,
+                    color: mutedColor,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  No role purpose added for this profile yet.
+                </p>
+              )}
+            </div>
+            <div
+              style={{
+                borderTop: `1px solid ${borderSubtle}`,
+                paddingTop: 10,
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+              }}
+            >
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setDashOpenResp((o) => !o)}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    padding: "8px 0",
+                    margin: 0,
+                    border: "none",
+                    background: "none",
+                    cursor: "pointer",
+                    color: text,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    textAlign: "left",
+                  }}
+                >
+                  <span>
+                    Responsibilities ({dashResponsibilities.length})
+                  </span>
+                  <span style={{ fontSize: 12, color: mutedColor }}>
+                    {dashOpenResp ? "▼" : "▶"}
+                  </span>
+                </button>
+                <AccordionCollapsible open={dashOpenResp}>
+                  <ul
+                    style={{
+                      margin: "4px 0 0",
+                      paddingLeft: 18,
+                      fontSize: 13,
+                      color: text,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {dashResponsibilities.length === 0 ? (
+                      <li style={{ color: mutedColor, listStyle: "none" }}>
+                        None listed.
+                      </li>
+                    ) : (
+                      dashResponsibilities.map((line, i) => (
+                        <li key={i} style={{ marginBottom: 6 }}>
+                          {line}
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                </AccordionCollapsible>
+              </div>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setDashOpenReq((o) => !o)}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    padding: "8px 0",
+                    margin: 0,
+                    border: "none",
+                    background: "none",
+                    cursor: "pointer",
+                    color: text,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    textAlign: "left",
+                  }}
+                >
+                  <span>Requirements ({dashRequirements.length})</span>
+                  <span style={{ fontSize: 12, color: mutedColor }}>
+                    {dashOpenReq ? "▼" : "▶"}
+                  </span>
+                </button>
+                <AccordionCollapsible open={dashOpenReq}>
+                  <ul
+                    style={{
+                      margin: "4px 0 0",
+                      paddingLeft: 18,
+                      fontSize: 13,
+                      color: text,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {dashRequirements.length === 0 ? (
+                      <li style={{ color: mutedColor, listStyle: "none" }}>
+                        None listed.
+                      </li>
+                    ) : (
+                      dashRequirements.map((line, i) => (
+                        <li key={i} style={{ marginBottom: 6 }}>
+                          {line}
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                </AccordionCollapsible>
+              </div>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setDashOpenSkills((o) => !o)}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    padding: "8px 0",
+                    margin: 0,
+                    border: "none",
+                    background: "none",
+                    cursor: "pointer",
+                    color: text,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    textAlign: "left",
+                  }}
+                >
+                  <span>Skills ({dashSkills.length})</span>
+                  <span style={{ fontSize: 12, color: mutedColor }}>
+                    {dashOpenSkills ? "▼" : "▶"}
+                  </span>
+                </button>
+                <AccordionCollapsible open={dashOpenSkills}>
+                  <div
+                    style={{
+                      margin: "6px 0 0",
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 6,
+                    }}
+                  >
+                    {dashSkills.length === 0 ? (
+                      <span style={{ fontSize: 13, color: mutedColor }}>
+                        None listed.
+                      </span>
+                    ) : (
+                      dashSkills.map((name, i) => (
+                        <span
+                          key={`${name}-${i}`}
+                          style={{
+                            display: "inline-block",
+                            padding: "4px 10px",
+                            borderRadius: 999,
+                            fontSize: 12,
+                            color: text,
+                            backgroundColor: bg,
+                            border: `1px solid ${border}`,
+                          }}
+                        >
+                          {name}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </AccordionCollapsible>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
 
       <section>
         <p

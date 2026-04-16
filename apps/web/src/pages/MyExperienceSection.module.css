@@ -1,0 +1,54 @@
+/* Responsive shell for My Experience: two columns on wide viewports, single column on small. */
+
+.shell {
+  max-width: 1100px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.grid {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+@media (min-width: 960px) {
+  .grid {
+    grid-template-columns: minmax(280px, 1fr) minmax(380px, 1.25fr);
+  }
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+
+.evidenceTagWherePanel {
+  animation: evidenceTagWhereIn 0.22s ease-out;
+}
+
+@keyframes evidenceTagWhereIn {
+  from {
+    opacity: 0.88;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.evidenceTagTabPanel {
+  animation: evidenceTagTabIn 0.18s ease-out;
+}
+
+@keyframes evidenceTagTabIn {
+  from {
+    opacity: 0.92;
+  }
+  to {
+    opacity: 1;
+  }
+}

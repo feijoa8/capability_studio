@@ -4,5 +4,74 @@
 [functions.refine-job-profile]
 verify_jwt = false
 
+[functions.suggest-job-profile-skills]
+verify_jwt = false
+
+[functions.suggest-job-profile-responsibilities]
+verify_jwt = false
+
+[functions.suggest-job-profile-requirements]
+verify_jwt = false
+
+[functions.suggest-job-profile-competencies]
+verify_jwt = false
+
 [functions.generate-practice-model]
+verify_jwt = false
+
+[functions.generate-subjects]
+verify_jwt = false
+
+[functions.generate-initial-subjects]
+verify_jwt = false
+
+[functions.generate-competencies]
+verify_jwt = false
+
+[functions.generate-competencies-from-subjects]
+verify_jwt = false
+
+[functions.generate-hierarchy-from-prompt]
+verify_jwt = false
+
+[functions.import-cv-extract]
+verify_jwt = false
+
+[functions.refine-evidence]
+verify_jwt = false
+
+[functions.refine-career]
+verify_jwt = false
+
+[functions.group-capability-areas]
+verify_jwt = false
+
+[functions.refine-leftover-subjects]
+verify_jwt = false
+
+[functions.normalise-subject-taxonomy]
+verify_jwt = false
+
+[functions.refine-unassigned-competencies]
+verify_jwt = false
+
+[functions.refine-practice-coverage]
+verify_jwt = false
+
+[functions.refine-practice-competencies]
+verify_jwt = false
+
+[functions.research-company-profile-url]
+verify_jwt = false
+
+[functions.help-api]
+verify_jwt = false
+
+[functions.email-otp-2fa]
+verify_jwt = false
+
+[functions.extract-job-posting]
+verify_jwt = false
+
+[functions.compare-job-to-evidence]
 verify_jwt = false

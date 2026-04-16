@@ -41,6 +41,7 @@ function buildUserPrompt(
   companyProfile: CompanyProfileInput | null,
   domain: string | null,
   focus: string | null,
+  existingPracticeNames: string[],
 ): string {
   const cp = companyProfile;
   const orgBlock = cp
@@ -70,6 +71,14 @@ function buildUserPrompt(
     ? `Focus area / lens: ${focus}`
     : "(No specific focus area requested.)";
 
+  const existingPracticesBlock =
+    existingPracticeNames.length > 0
+      ? `## Existing practices in this workspace (do not duplicate or trivially rename)
+${existingPracticeNames.join(", ")}
+
+`
+      : "";
+
   return `## Organisation context
 ${orgBlock}
 
@@ -77,17 +86,16 @@ ${orgBlock}
 ${domainLine}
 ${focusLine}
 
-## Task
-Propose a **practice model**: a set of **coarse practice areas** (not subjects, not competencies) that together cover how capability work is organised in this organisation.
+${existingPracticesBlock}## Task (Capability Studio)
+You are proposing **Practices** only for a capability development tool. Output is **not** a consulting taxonomy: Practices must be **disciplines or ways of working**—not business domains, regulatory themes, or industry topics (those belong in **Subjects** in a full hierarchy, not here).
 
-**Requirements:**
-- Align each practice to the organisation’s industry, delivery model, and regulatory environment (when inferable from context).
-- **6–14 practices** unless the organisation is very small (then at least 4).
-- Practices must be **mutually distinct** (no overlapping names or duplicate concepts).
-- **Collectively** they should span the domain / org context without large gaps — avoid listing only one part of the value chain unless the focus explicitly narrows scope.
-- **Avoid generic filler** that could apply to any company (e.g. "Communication", "Leadership" as standalone practice names).
-- **Do not** go below "practice" level: no job titles, no competencies, no subject areas, no process steps — stay at **strategic practice groupings** (e.g. how a bank might organise "Customer insight", "Digital delivery", "Risk & compliance", etc., when relevant to context).
-- Each practice needs a short **name** (title case or sentence case) and a **description** (1–3 sentences) that anchors it in this organisation.
+**Practice layer rules:**
+- **Include:** high-level disciplines, professional functions, or ways of working (e.g. Agile Delivery, Business Analysis, Product Management, Service Design, Project Delivery, Change Management, Engineering, Data Practice).
+- **Exclude:** domains or functional areas that read as **Subjects**—e.g. Risk Management, Compliance, Customer Experience, Data Governance, Digital Banking, Financial Products, Technology Integration—unless naming them clearly as a **discipline** (rare). Prefer fewer, stronger Practices; **no filler** practices.
+- Return **3–6 practices** maximum. Small orgs may use fewer; never exceed 6.
+- Practices must be **mutually distinct** (no overlapping names or near-duplicates).
+- **Collectively** they should cover how capability work is organised without huge gaps, unless scope is explicitly narrow.
+- Each practice needs a short **name** and a **description** (1–3 sentences) anchored in this organisation where context allows.
 
 Return JSON only with EXACTLY this shape:
 {
@@ -99,6 +107,7 @@ Return JSON only with EXACTLY this shape:
 No markdown fences.`;
 }
 
+// Expects discipline-level practice names; JSON shape is unchanged—prompting enforces semantics.
 function parseGenerateResult(content: string): { practices: PracticeDraft[] } {
   let parsed: unknown;
   try {
@@ -136,6 +145,7 @@ function parseRequestBody(raw: unknown): {
   companyProfile: CompanyProfileInput | null;
   domain: string | null;
   focus: string | null;
+  existingPracticeNames: string[];
 } {
   if (!raw || typeof raw !== "object") {
     throw new Error("Request body must be a JSON object.");
@@ -161,7 +171,12 @@ function parseRequestBody(raw: unknown): {
       ? null
       : String(focusRaw).trim() || null;
 
-  return { companyProfile, domain, focus };
+  const epnRaw = body.existingPracticeNames;
+  const existingPracticeNames = Array.isArray(epnRaw)
+    ? epnRaw.map((x) => String(x).trim()).filter(Boolean)
+    : [];
+
+  return { companyProfile, domain, focus, existingPracticeNames };
 }
 
 Deno.serve(async (req) => {
@@ -206,20 +221,29 @@ Deno.serve(async (req) => {
   }
 
   const system =
-    `You are an expert organisational capability and workforce design consultant. You design **practice models** for competency frameworks inside organisations.
+    `You support **Capability Studio**, a capability development tool. You output only valid JSON matching the schema.
 
-You output only valid JSON matching the user's schema. Use the organisation's terminology where provided.
+**What a Practice is (critical):**
+- Practices are **high-level disciplines, professional functions, or ways of working**—the top layer above Subjects and Competencies.
+- **Do not** use business domains, regulatory areas, industry topics, or operational themes as Practice names when they are better framed as **Subjects** under a discipline.
 
-**Rules:**
-- Practices are **coarse thematic areas** (not job titles, not competencies, not subjects, not detailed processes).
-- Avoid generic duplicates that could apply anywhere; tie each practice to the organisation’s industry, delivery model, and regulatory environment when known.
-- **Mutual distinctness** and **collective coverage** of the domain are required.
-- **Not too granular** — no sub-skills or subject lists; this is a organising layer above subjects.`;
+**Good Practice examples:** Agile Delivery, Business Analysis, Product Management, Service Design, Project Delivery, Change Management, Engineering, Data Practice.
+
+**Bad Practice examples (usually Subjects, not Practices):** Risk Management, Compliance, Customer Experience, Data Governance, Digital Banking, Financial Products, Technology Integration.
+
+**Correct vs incorrect (names only):**
+- Correct: Practice "Business Analysis" (discipline).
+- Incorrect: Practice "Customer Experience" or "Risk Management" or "Compliance"—these are typically **Subjects** under e.g. Service Design, Business Analysis, or Change Management.
+
+**Output discipline:**
+- Prefer **fewer, stronger** Practices; avoid filler.
+- Names concise and professional; no duplicate or near-duplicate concepts.`;
 
   const user = buildUserPrompt(
     parsedBody.companyProfile,
     parsedBody.domain,
     parsedBody.focus,
+    parsedBody.existingPracticeNames,
   );
 
   try {

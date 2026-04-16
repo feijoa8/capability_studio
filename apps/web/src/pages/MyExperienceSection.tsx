@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import styles from "./MyExperienceSection.module.css";
 import type { FormEvent } from "react";
 import { supabase } from "../lib/supabase";
 import {
@@ -11,8 +12,30 @@ import type {
   UserExperienceProject,
   UserExperienceRow,
   UserQualificationRow,
+  WorkspaceMembership,
 } from "./hub/types";
+import {
+  CurrentCvReference,
+  type StoredCvRow,
+} from "./CurrentCvReference";
+import { CvImportFlow } from "./CvImportFlow";
+import {
+  WorkExperienceRefinerModal,
+  type RefinementSuggestionPayload,
+} from "./hub/contextualRefinement";
 import { SkillTagInput } from "./hub/SkillTagInput";
+import {
+  aggregateIndustriesFromEvidence,
+  aggregateMethodsFromEvidence,
+  aggregateSkillsFromEvidence,
+  aggregateToolsFromEvidence,
+  buildIndustryEvidenceDetails,
+  buildMethodEvidenceDetails,
+  buildSkillEvidenceDetails,
+  buildToolEvidenceDetails,
+  type EvidenceTagDetail,
+  PERSONAL_EVIDENCE_SKILL_TOP_N,
+} from "./hub/personalEvidenceDerivation";
 import { dedupeSkillsNormalized, normalizeSkillLabel } from "./hub/skillNormalization";
 import {
   accent,
@@ -27,40 +50,270 @@ import {
   panelShell,
   sectionEyebrow,
   surface,
+  surfaceHover,
   text,
 } from "./hub/hubTheme";
 
+/** Stable empty array for refiner `relatedProjects` when a role has no projects (avoids refetch loops). */
+const EMPTY_RELATED_PROJECTS: UserExperienceProject[] = [];
+
 type Props = {
   activeOrgId: string | null;
+  /** Effective membership for `activeOrgId` from shell (`pickEffectiveMembershipForOrganisation`). */
+  activeWorkspaceMembership: WorkspaceMembership | undefined;
   isActive: boolean;
+  /** Bumped from profile (e.g. after CV import) to reload experience rows without switching tabs. */
+  reloadToken?: number;
+  /** From `profiles.primary_account_type` (shell); used to allow My Experience without a workspace. */
+  primaryAccountType: string | null;
+  /** False until header/shell has loaded profile — avoids flashing the workspace-only blocker. */
+  primaryAccountTypeReady: boolean;
 };
 
-function aggregateSkills(
-  entries: UserExperienceRow[]
-): { label: string; count: number }[] {
-  const byKey = new Map<string, { label: string; count: number }>();
-  for (const e of entries) {
-    for (const t of e.skills ?? []) {
-      const label = normalizeSkillLabel(t);
-      if (!label) continue;
-      const k = label.toLowerCase();
-      const cur = byKey.get(k);
-      if (cur) cur.count += 1;
-      else byKey.set(k, { label, count: 1 });
-    }
+type EvidenceTagListField = "skills" | "methods" | "tools";
+
+type EvidenceTagCategoryTab = "skills" | "methods" | "tools" | "industries";
+
+/** Tabbed chip grid + optional “where” provenance (read-only). */
+function EvidenceTagChipPanel(props: {
+  rows: { label: string; count: number }[];
+  details: Map<string, EvidenceTagDetail>;
+  expandedKey: string | null;
+  onToggleKey: (key: string | null) => void;
+  onRevealRole: (experienceId: string) => void;
+  /** Normalized map key for `details` (skills/methods/tools vs industry). */
+  detailKeyForLabel: (label: string) => string;
+  emptyHint: string;
+  whereBlurb: string;
+}) {
+  const {
+    rows,
+    details,
+    expandedKey,
+    onToggleKey,
+    onRevealRole,
+    detailKeyForLabel,
+    emptyHint,
+    whereBlurb,
+  } = props;
+
+  if (rows.length === 0) {
+    return (
+      <p style={{ margin: 0, fontSize: 12, color: mutedColor, lineHeight: 1.5 }}>
+        {emptyHint}
+      </p>
+    );
   }
-  return [...byKey.values()].sort((a, b) => b.count - a.count);
+
+  const expandedDetail =
+    expandedKey != null ? details.get(expandedKey) : undefined;
+
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          alignItems: "flex-start",
+        }}
+      >
+        {rows.map((s) => {
+          const sk = detailKeyForLabel(s.label);
+          const detail = details.get(sk);
+          const open = expandedKey === sk;
+          const whereLen = detail?.where?.length ?? 0;
+          const count = detail?.mentionCount ?? s.count;
+          const tooltip =
+            whereLen > 0
+              ? (detail?.where ?? [])
+                  .slice(0, 2)
+                  .map((w) => w.caption)
+                  .join(" · ")
+              : undefined;
+          const chipShell = {
+            display: "inline-flex" as const,
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap" as const,
+            maxWidth: "100%" as const,
+            padding: "6px 10px",
+            borderRadius: 999,
+            border: `1px solid ${
+              whereLen > 0 && open
+                ? "rgba(110, 176, 240, 0.45)"
+                : borderSubtle
+            }`,
+            backgroundColor:
+              whereLen > 0 ? (open ? surfaceHover : surface) : bg,
+            color: text,
+            fontSize: 12,
+            fontWeight: 500,
+            lineHeight: 1.35,
+            transition: "background-color 0.15s ease, border-color 0.15s ease",
+          };
+
+          return (
+            <div
+              key={s.label}
+              style={{
+                display: "inline-flex",
+                flexDirection: "column",
+                alignItems: "stretch",
+                maxWidth: "100%",
+              }}
+            >
+              {whereLen > 0 ? (
+                <button
+                  type="button"
+                  title={tooltip}
+                  aria-expanded={open}
+                  onClick={() => onToggleKey(open ? null : sk)}
+                  style={{
+                    ...chipShell,
+                    cursor: "pointer",
+                    textAlign: "left",
+                  }}
+                >
+                  <span
+                    style={{
+                      wordBreak: "break-word",
+                      minWidth: 0,
+                    }}
+                  >
+                    {s.label}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 600,
+                      padding: "2px 7px",
+                      borderRadius: 999,
+                      backgroundColor: bg,
+                      border: `1px solid ${borderSubtle}`,
+                      color: mutedColor,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {count}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 600,
+                      color: mutedColor,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {open ? "Hide" : "Where"}
+                  </span>
+                </button>
+              ) : (
+                <span
+                  style={{
+                    ...chipShell,
+                    cursor: "default",
+                  }}
+                >
+                  <span
+                    style={{
+                      wordBreak: "break-word",
+                      minWidth: 0,
+                    }}
+                  >
+                    {s.label}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 600,
+                      padding: "2px 7px",
+                      borderRadius: 999,
+                      backgroundColor: bg,
+                      border: `1px solid ${borderSubtle}`,
+                      color: mutedColor,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {count}
+                  </span>
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {expandedDetail &&
+      expandedKey != null &&
+      (expandedDetail.where?.length ?? 0) > 0 ? (
+        <div
+          style={{
+            marginTop: 12,
+            padding: "10px 12px",
+            borderRadius: 8,
+            border: `1px solid ${borderSubtle}`,
+            backgroundColor: bg,
+          }}
+          className={styles.evidenceTagWherePanel}
+        >
+          <p
+            style={{
+              margin: "0 0 8px",
+              fontSize: 11,
+              color: mutedColor,
+              lineHeight: 1.4,
+            }}
+          >
+            {whereBlurb}
+          </p>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+            }}
+          >
+            {expandedDetail.where!.map((w) => (
+              <button
+                key={`${w.kind}-${w.experienceId}-${w.projectId ?? ""}`}
+                type="button"
+                onClick={() => onRevealRole(w.experienceId)}
+                style={{
+                  ...btnGhost,
+                  fontSize: 12,
+                  padding: "6px 10px",
+                  textAlign: "left",
+                  width: "100%",
+                  justifyContent: "flex-start",
+                }}
+              >
+                <span style={{ color: mutedColor, marginRight: 6 }}>
+                  {w.kind === "project" ? "Project" : "Role"}
+                </span>
+                {w.caption}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
-function buildSkillSuggestionPool(
+function buildTagSuggestionPool(
   experienceRows: UserExperienceRow[],
-  projectRows: UserExperienceProject[]
+  projectRows: UserExperienceProject[],
+  field: EvidenceTagListField
 ): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
+  const pull = (row: UserExperienceRow | UserExperienceProject) => {
+    const v = row[field];
+    return Array.isArray(v) ? v : [];
+  };
   for (const e of experienceRows) {
-    for (const t of e.skills ?? []) {
-      const n = normalizeSkillLabel(t);
+    for (const t of pull(e)) {
+      const n = normalizeSkillLabel(String(t));
       if (!n) continue;
       const k = n.toLowerCase();
       if (seen.has(k)) continue;
@@ -69,7 +322,7 @@ function buildSkillSuggestionPool(
     }
   }
   for (const p of projectRows) {
-    for (const t of p.skills ?? []) {
+    for (const t of pull(p)) {
       const n = normalizeSkillLabel(String(t));
       if (!n) continue;
       const k = n.toLowerCase();
@@ -81,19 +334,11 @@ function buildSkillSuggestionPool(
   return out.sort((a, b) => a.localeCompare(b));
 }
 
-function aggregateIndustries(
-  entries: UserExperienceRow[]
-): { label: string; count: number }[] {
-  const byKey = new Map<string, { label: string; count: number }>();
-  for (const e of entries) {
-    const ind = e.industry?.trim();
-    if (!ind) continue;
-    const k = ind.toLowerCase();
-    const cur = byKey.get(k);
-    if (cur) cur.count += 1;
-    else byKey.set(k, { label: ind, count: 1 });
-  }
-  return [...byKey.values()].sort((a, b) => b.count - a.count);
+function buildSkillSuggestionPool(
+  experienceRows: UserExperienceRow[],
+  projectRows: UserExperienceProject[]
+): string[] {
+  return buildTagSuggestionPool(experienceRows, projectRows, "skills");
 }
 
 function formatDate(iso: string | null | undefined): string {
@@ -139,6 +384,8 @@ type ExpForm = {
   description: string;
   industry: string;
   skills: string[];
+  methods: string[];
+  tools: string[];
 };
 
 function emptyExpForm(): ExpForm {
@@ -151,6 +398,8 @@ function emptyExpForm(): ExpForm {
     description: "",
     industry: "",
     skills: [],
+    methods: [],
+    tools: [],
   };
 }
 
@@ -164,6 +413,8 @@ function rowToExpForm(row: UserExperienceRow): ExpForm {
     description: row.description?.trim() ?? "",
     industry: row.industry?.trim() ?? "",
     skills: dedupeSkillsNormalized(row.skills ?? []),
+    methods: dedupeSkillsNormalized(row.methods ?? []),
+    tools: dedupeSkillsNormalized(row.tools ?? []),
   };
 }
 
@@ -241,6 +492,8 @@ type ProjForm = {
   end_date: string;
   industry: string;
   skills: string[];
+  methods: string[];
+  tools: string[];
 };
 
 function emptyProjForm(): ProjForm {
@@ -253,6 +506,8 @@ function emptyProjForm(): ProjForm {
     end_date: "",
     industry: "",
     skills: [],
+    methods: [],
+    tools: [],
   };
 }
 
@@ -266,10 +521,19 @@ function rowToProjForm(row: UserExperienceProject): ProjForm {
     end_date: row.end_date?.slice(0, 10) ?? "",
     industry: row.industry?.trim() ?? "",
     skills: dedupeSkillsNormalized((row.skills ?? []).map(String)),
+    methods: dedupeSkillsNormalized((row.methods ?? []).map(String)),
+    tools: dedupeSkillsNormalized((row.tools ?? []).map(String)),
   };
 }
 
-export function MyExperienceSection({ activeOrgId, isActive }: Props) {
+export function MyExperienceSection({
+  activeOrgId,
+  activeWorkspaceMembership,
+  isActive,
+  reloadToken = 0,
+  primaryAccountType,
+  primaryAccountTypeReady,
+}: Props) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
@@ -281,7 +545,28 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
     []
   );
   const [projects, setProjects] = useState<UserExperienceProject[]>([]);
+  const [storedCv, setStoredCv] = useState<StoredCvRow | null>(null);
+  const [cvImportOpenRequest, setCvImportOpenRequest] = useState(0);
+  const [removingCv, setRemovingCv] = useState(false);
   const [saving, setSaving] = useState(false);
+  /** At most one work entry expanded (accordion). */
+  const [expandedExperienceId, setExpandedExperienceId] = useState<
+    string | null
+  >(null);
+  const [expandedQualificationId, setExpandedQualificationId] = useState<
+    string | null
+  >(null);
+  const [expandedCertificationId, setExpandedCertificationId] = useState<
+    string | null
+  >(null);
+  const [qualificationsSectionOpen, setQualificationsSectionOpen] =
+    useState(false);
+  const [certificationsSectionOpen, setCertificationsSectionOpen] =
+    useState(false);
+  /** Applies to skills, methods, and tools summary lists. */
+  const [evidenceTagSummaryScope, setEvidenceTagSummaryScope] = useState<
+    "top" | "all"
+  >("top");
 
   const [expModal, setExpModal] = useState<"closed" | "add" | "edit">(
     "closed"
@@ -307,6 +592,9 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
     | { mode: "edit"; experienceId: string; projectId: string }
   >({ mode: "closed" });
   const [projForm, setProjForm] = useState<ProjForm>(emptyProjForm());
+  /** Contextual refiner (AI prep): bounded modal for one work experience row. */
+  const [refinerExperience, setRefinerExperience] =
+    useState<UserExperienceRow | null>(null);
 
   const projectsByExperienceId = useMemo(() => {
     const r: Record<string, UserExperienceProject[]> = {};
@@ -330,24 +618,176 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
     () => buildSkillSuggestionPool(experiences, projects),
     [experiences, projects]
   );
+  const methodSuggestionPool = useMemo(
+    () => buildTagSuggestionPool(experiences, projects, "methods"),
+    [experiences, projects]
+  );
+  const toolSuggestionPool = useMemo(
+    () => buildTagSuggestionPool(experiences, projects, "tools"),
+    [experiences, projects]
+  );
 
   const skillSummary = useMemo(
-    () => aggregateSkills(experiences),
-    [experiences]
+    () => aggregateSkillsFromEvidence(experiences, projects),
+    [experiences, projects]
+  );
+  const methodSummary = useMemo(
+    () => aggregateMethodsFromEvidence(experiences, projects),
+    [experiences, projects]
+  );
+  const toolSummary = useMemo(
+    () => aggregateToolsFromEvidence(experiences, projects),
+    [experiences, projects]
   );
   const industrySummary = useMemo(
-    () => aggregateIndustries(experiences),
-    [experiences]
+    () => aggregateIndustriesFromEvidence(experiences, projects),
+    [experiences, projects]
   );
+
+  const skillEvidenceDetails = useMemo(
+    () => buildSkillEvidenceDetails(experiences, projects),
+    [experiences, projects]
+  );
+  const methodEvidenceDetails = useMemo(
+    () => buildMethodEvidenceDetails(experiences, projects),
+    [experiences, projects]
+  );
+  const toolEvidenceDetails = useMemo(
+    () => buildToolEvidenceDetails(experiences, projects),
+    [experiences, projects]
+  );
+  const industryEvidenceDetails = useMemo(
+    () => buildIndustryEvidenceDetails(experiences, projects),
+    [experiences, projects]
+  );
+
+  const [expandedSkillDetailKey, setExpandedSkillDetailKey] = useState<
+    string | null
+  >(null);
+  const [expandedMethodDetailKey, setExpandedMethodDetailKey] = useState<
+    string | null
+  >(null);
+  const [expandedToolDetailKey, setExpandedToolDetailKey] = useState<
+    string | null
+  >(null);
+  const [expandedIndustryDetailKey, setExpandedIndustryDetailKey] = useState<
+    string | null
+  >(null);
+  const [evidenceTagTab, setEvidenceTagTab] =
+    useState<EvidenceTagCategoryTab>("skills");
+
+  const selectEvidenceTagTab = useCallback((tab: EvidenceTagCategoryTab) => {
+    setEvidenceTagTab(tab);
+    setExpandedSkillDetailKey(null);
+    setExpandedMethodDetailKey(null);
+    setExpandedToolDetailKey(null);
+    setExpandedIndustryDetailKey(null);
+  }, []);
+
+  const revealExperienceRow = useCallback((experienceId: string) => {
+    setExpandedExperienceId(experienceId);
+    queueMicrotask(() => {
+      document
+        .getElementById(`my-exp-evidence-${experienceId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }, []);
 
   const sortedCertifications = useMemo(
     () => sortCertificationsByRenewalUrgency(certifications),
     [certifications]
   );
 
+  const skillSummaryDisplayed = useMemo(() => {
+    if (
+      evidenceTagSummaryScope === "all" ||
+      skillSummary.length <= PERSONAL_EVIDENCE_SKILL_TOP_N
+    ) {
+      return skillSummary;
+    }
+    return skillSummary.slice(0, PERSONAL_EVIDENCE_SKILL_TOP_N);
+  }, [skillSummary, evidenceTagSummaryScope]);
+
+  const methodSummaryDisplayed = useMemo(() => {
+    if (
+      evidenceTagSummaryScope === "all" ||
+      methodSummary.length <= PERSONAL_EVIDENCE_SKILL_TOP_N
+    ) {
+      return methodSummary;
+    }
+    return methodSummary.slice(0, PERSONAL_EVIDENCE_SKILL_TOP_N);
+  }, [methodSummary, evidenceTagSummaryScope]);
+
+  const toolSummaryDisplayed = useMemo(() => {
+    if (
+      evidenceTagSummaryScope === "all" ||
+      toolSummary.length <= PERSONAL_EVIDENCE_SKILL_TOP_N
+    ) {
+      return toolSummary;
+    }
+    return toolSummary.slice(0, PERSONAL_EVIDENCE_SKILL_TOP_N);
+  }, [toolSummary, evidenceTagSummaryScope]);
+
+  const industrySummaryDisplayed = useMemo(() => {
+    if (
+      evidenceTagSummaryScope === "all" ||
+      industrySummary.length <= PERSONAL_EVIDENCE_SKILL_TOP_N
+    ) {
+      return industrySummary;
+    }
+    return industrySummary.slice(0, PERSONAL_EVIDENCE_SKILL_TOP_N);
+  }, [industrySummary, evidenceTagSummaryScope]);
+
+  const evidenceTagCurrentCategoryFullCount = useMemo(() => {
+    switch (evidenceTagTab) {
+      case "skills":
+        return skillSummary.length;
+      case "methods":
+        return methodSummary.length;
+      case "tools":
+        return toolSummary.length;
+      case "industries":
+        return industrySummary.length;
+      default:
+        return 0;
+    }
+  }, [
+    evidenceTagTab,
+    skillSummary.length,
+    methodSummary.length,
+    toolSummary.length,
+    industrySummary.length,
+  ]);
+
+  const showEvidenceTagTopAllToggle =
+    evidenceTagCurrentCategoryFullCount > PERSONAL_EVIDENCE_SKILL_TOP_N;
+
+  const hasAnyEvidenceTags = useMemo(
+    () =>
+      skillSummary.length > 0 ||
+      methodSummary.length > 0 ||
+      toolSummary.length > 0 ||
+      industrySummary.length > 0,
+    [
+      skillSummary.length,
+      methodSummary.length,
+      toolSummary.length,
+      industrySummary.length,
+    ],
+  );
+
+  const certExpiringSoonCount = useMemo(
+    () =>
+      certifications.filter(
+        (c) => certificationRenewalStatus(c.expiry_date) === "expiring_soon",
+      ).length,
+    [certifications],
+  );
+
   const loadData = useCallback(async () => {
-    if (!isActive || !activeOrgId) {
+    if (!isActive) {
       setLoading(false);
+      setStoredCv(null);
       return;
     }
 
@@ -359,11 +799,12 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
     if (!uid) {
       setLoadError("Not signed in.");
       setLoading(false);
+      setStoredCv(null);
       return;
     }
     setUserId(uid);
 
-    const [expRes, qualRes, certRes, projRes] = await Promise.all([
+    const expProj = await Promise.all([
       supabase
         .from("user_experience")
         .select("*")
@@ -371,23 +812,76 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: false }),
       supabase
-        .from("user_qualifications")
-        .select("*")
-        .eq("organisation_id", activeOrgId)
-        .eq("user_id", uid)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("user_certifications")
-        .select("*")
-        .eq("organisation_id", activeOrgId)
-        .eq("user_id", uid)
-        .order("created_at", { ascending: false }),
-      supabase
         .from("user_experience_projects")
         .select("*")
         .eq("user_id", uid)
         .order("created_at", { ascending: true }),
     ]);
+    const expRes = expProj[0];
+    const projRes = expProj[1];
+
+    let qualRes: {
+      data: unknown;
+      error: { message: string } | null;
+    };
+    let certRes: {
+      data: unknown;
+      error: { message: string } | null;
+    };
+    const evidenceOrgId = activeOrgId?.trim() ? activeOrgId.trim() : null;
+    if (evidenceOrgId) {
+      const qc = await Promise.all([
+        supabase
+          .from("user_qualifications")
+          .select("*")
+          .eq("organisation_id", evidenceOrgId)
+          .eq("user_id", uid)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("user_certifications")
+          .select("*")
+          .eq("organisation_id", evidenceOrgId)
+          .eq("user_id", uid)
+          .order("created_at", { ascending: false }),
+      ]);
+      qualRes = qc[0];
+      certRes = qc[1];
+    } else {
+      const qc = await Promise.all([
+        supabase
+          .from("user_qualifications")
+          .select("*")
+          .is("organisation_id", null)
+          .eq("user_id", uid)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("user_certifications")
+          .select("*")
+          .is("organisation_id", null)
+          .eq("user_id", uid)
+          .order("created_at", { ascending: false }),
+      ]);
+      qualRes = qc[0];
+      certRes = qc[1];
+    }
+
+    const cvRes = evidenceOrgId
+      ? await supabase
+        .from("user_cv_uploads")
+        .select("id,storage_path,original_filename,mime_type,uploaded_at")
+        .eq("user_id", uid)
+        .eq("organisation_id", evidenceOrgId)
+        .order("uploaded_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      : await supabase
+        .from("user_cv_uploads")
+        .select("id,storage_path,original_filename,mime_type,uploaded_at")
+        .eq("user_id", uid)
+        .is("organisation_id", null)
+        .order("uploaded_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
     if (expRes.error) {
       console.error(expRes.error);
@@ -422,8 +916,87 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
       setProjects((projRes.data as UserExperienceProject[]) ?? []);
     }
 
+    if (cvRes.error) {
+      console.error(cvRes.error);
+      setStoredCv(null);
+    } else {
+      setStoredCv((cvRes.data as StoredCvRow | null) ?? null);
+    }
+
     setLoading(false);
-  }, [isActive, activeOrgId]);
+  }, [isActive, activeOrgId, reloadToken]);
+
+  const removeStoredCv = useCallback(async () => {
+    if (!storedCv || !userId) return;
+    if (
+      !confirm(
+        "Remove this stored CV? The file will be deleted. You can upload a new one anytime."
+      )
+    ) {
+      return;
+    }
+    setRemovingCv(true);
+    try {
+      const { error: stErr } = await supabase.storage
+        .from("cv-uploads")
+        .remove([storedCv.storage_path]);
+      if (stErr) console.warn("[Current CV] storage remove:", stErr.message);
+
+      let dErr;
+      if (activeOrgId) {
+        const r = await supabase
+          .from("user_cv_uploads")
+          .delete()
+          .eq("id", storedCv.id)
+          .eq("user_id", userId)
+          .eq("organisation_id", activeOrgId);
+        dErr = r.error;
+      } else {
+        const r = await supabase
+          .from("user_cv_uploads")
+          .delete()
+          .eq("id", storedCv.id)
+          .eq("user_id", userId)
+          .is("organisation_id", null);
+        dErr = r.error;
+      }
+
+      if (dErr) throw dErr;
+
+      const { data: next, error: qErr } = activeOrgId
+        ? await supabase
+            .from("user_cv_uploads")
+            .select(
+              "id,storage_path,original_filename,mime_type,uploaded_at",
+            )
+            .eq("user_id", userId)
+            .eq("organisation_id", activeOrgId)
+            .order("uploaded_at", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        : await supabase
+            .from("user_cv_uploads")
+            .select(
+              "id,storage_path,original_filename,mime_type,uploaded_at",
+            )
+            .eq("user_id", userId)
+            .is("organisation_id", null)
+            .order("uploaded_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+      if (qErr) {
+        console.error(qErr);
+        setStoredCv(null);
+      } else {
+        setStoredCv((next as StoredCvRow | null) ?? null);
+      }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not remove stored CV.");
+    } finally {
+      setRemovingCv(false);
+    }
+  }, [storedCv, activeOrgId, userId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -459,6 +1032,35 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
     setExpModal("edit");
   }
 
+  function applyRefinementSuggestionToEditForm(
+    row: UserExperienceRow,
+    s: RefinementSuggestionPayload,
+  ) {
+    const next = rowToExpForm(row);
+    if (s.suggestedDescription?.trim()) {
+      next.description = s.suggestedDescription.trim();
+    }
+    if (s.suggestedSkills.length > 0) {
+      next.skills = dedupeSkillsNormalized(s.suggestedSkills);
+    }
+    if (s.suggestedMethods.length > 0) {
+      next.methods = dedupeSkillsNormalized(s.suggestedMethods);
+    }
+    if (s.suggestedTools.length > 0) {
+      next.tools = dedupeSkillsNormalized(s.suggestedTools);
+    }
+    if (s.suggestedIndustry !== null && s.suggestedIndustry !== undefined) {
+      next.industry = s.suggestedIndustry.trim();
+    }
+    closeProjectModal();
+    setQualModal("closed");
+    closeCertModal();
+    setEditingExpId(row.id);
+    setExpForm(next);
+    setExpModal("edit");
+    setRefinerExperience(null);
+  }
+
   function closeExpModal() {
     setExpModal("closed");
     setEditingExpId(null);
@@ -476,6 +1078,8 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
 
     setSaving(true);
     const skills = dedupeSkillsNormalized(expForm.skills);
+    const methods = dedupeSkillsNormalized(expForm.methods);
+    const tools = dedupeSkillsNormalized(expForm.tools);
     const payload = {
       role_title: title,
       organisation_name: org,
@@ -485,6 +1089,8 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
       is_current: expForm.is_current,
       industry: expForm.industry.trim() || null,
       skills,
+      methods,
+      tools,
       updated_at: new Date().toISOString(),
     };
 
@@ -543,6 +1149,7 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
       alert(error.message || "Could not delete.");
       return;
     }
+    setExpandedExperienceId((prev) => (prev === id ? null : prev));
     await loadData();
   }
 
@@ -585,7 +1192,8 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
 
   async function submitQualification(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!userId || !activeOrgId) return;
+    if (!userId) return;
+    const evidenceOrgId = activeOrgId?.trim() ? activeOrgId.trim() : null;
     const title = qualForm.title.trim();
     if (!title) {
       alert("Title is required.");
@@ -606,7 +1214,7 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
     if (qualModal === "add") {
       const { error } = await supabase.from("user_qualifications").insert({
         user_id: userId,
-        organisation_id: activeOrgId,
+        organisation_id: evidenceOrgId,
         ...payload,
       });
       setSaving(false);
@@ -616,12 +1224,16 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
         return;
       }
     } else if (editingQualId) {
-      const { error } = await supabase
+      let q = supabase
         .from("user_qualifications")
         .update(payload)
         .eq("id", editingQualId)
-        .eq("user_id", userId)
-        .eq("organisation_id", activeOrgId);
+        .eq("user_id", userId);
+      q =
+        evidenceOrgId === null
+          ? q.is("organisation_id", null)
+          : q.eq("organisation_id", evidenceOrgId);
+      const { error } = await q;
       setSaving(false);
       if (error) {
         console.error(error);
@@ -637,24 +1249,30 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
   async function deleteQualification(id: string) {
     if (!userId) return;
     if (!confirm("Remove this qualification?")) return;
-    if (!activeOrgId) return;
-    const { error } = await supabase
+    const evidenceOrgId = activeOrgId?.trim() ? activeOrgId.trim() : null;
+    let q = supabase
       .from("user_qualifications")
       .delete()
       .eq("id", id)
-      .eq("user_id", userId)
-      .eq("organisation_id", activeOrgId);
+      .eq("user_id", userId);
+    q =
+      evidenceOrgId === null
+        ? q.is("organisation_id", null)
+        : q.eq("organisation_id", evidenceOrgId);
+    const { error } = await q;
     if (error) {
       console.error(error);
       alert(error.message || "Could not delete.");
       return;
     }
+    setExpandedQualificationId((prev) => (prev === id ? null : prev));
     await loadData();
   }
 
   async function submitCertification(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!userId || !activeOrgId) return;
+    if (!userId) return;
+    const evidenceOrgId = activeOrgId?.trim() ? activeOrgId.trim() : null;
     const title = certForm.title.trim();
     if (!title) {
       alert("Title is required.");
@@ -676,7 +1294,7 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
     if (certModal === "add") {
       const { error } = await supabase.from("user_certifications").insert({
         user_id: userId,
-        organisation_id: activeOrgId,
+        organisation_id: evidenceOrgId,
         ...payload,
       });
       setSaving(false);
@@ -686,12 +1304,16 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
         return;
       }
     } else if (editingCertId) {
-      const { error } = await supabase
+      let q = supabase
         .from("user_certifications")
         .update(payload)
         .eq("id", editingCertId)
-        .eq("user_id", userId)
-        .eq("organisation_id", activeOrgId);
+        .eq("user_id", userId);
+      q =
+        evidenceOrgId === null
+          ? q.is("organisation_id", null)
+          : q.eq("organisation_id", evidenceOrgId);
+      const { error } = await q;
       setSaving(false);
       if (error) {
         console.error(error);
@@ -705,19 +1327,25 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
   }
 
   async function deleteCertification(id: string) {
-    if (!userId || !activeOrgId) return;
+    if (!userId) return;
     if (!confirm("Remove this certification?")) return;
-    const { error } = await supabase
+    const evidenceOrgId = activeOrgId?.trim() ? activeOrgId.trim() : null;
+    let q = supabase
       .from("user_certifications")
       .delete()
       .eq("id", id)
-      .eq("user_id", userId)
-      .eq("organisation_id", activeOrgId);
+      .eq("user_id", userId);
+    q =
+      evidenceOrgId === null
+        ? q.is("organisation_id", null)
+        : q.eq("organisation_id", evidenceOrgId);
+    const { error } = await q;
     if (error) {
       console.error(error);
       alert(error.message || "Could not delete.");
       return;
     }
+    setExpandedCertificationId((prev) => (prev === id ? null : prev));
     await loadData();
   }
 
@@ -758,6 +1386,8 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
 
     setSaving(true);
     const skills = dedupeSkillsNormalized(projForm.skills);
+    const methods = dedupeSkillsNormalized(projForm.methods);
+    const tools = dedupeSkillsNormalized(projForm.tools);
     const payload = {
       project_name: pname,
       client: projForm.client.trim() || null,
@@ -767,6 +1397,8 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
       end_date: projForm.end_date.trim() || null,
       industry: projForm.industry.trim() || null,
       skills,
+      methods,
+      tools,
       updated_at: new Date().toISOString(),
     };
 
@@ -827,6 +1459,9 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
     return null;
   }
 
+  /** Non-empty org id; whitespace-only must not count as workspace (JS truthiness bug). */
+  const hasWorkspaceOrg = Boolean(activeOrgId?.trim());
+
   const card = {
     padding: "16px 18px",
     borderRadius: 10,
@@ -853,7 +1488,15 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
     color: mutedColor,
   };
 
-  if (!activeOrgId) {
+  if (!hasWorkspaceOrg && !primaryAccountTypeReady) {
+    return (
+      <div style={{ ...panelShell, marginTop: 0 }}>
+        <p style={{ ...muted, margin: 0 }}>Loading experience…</p>
+      </div>
+    );
+  }
+
+  if (!hasWorkspaceOrg && primaryAccountType !== "personal") {
     return (
       <div style={{ ...panelShell, marginTop: 0 }}>
         <p style={{ ...muted, margin: 0 }}>
@@ -871,10 +1514,29 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
     );
   }
 
+  const isPersonalNoWorkspace =
+    primaryAccountType === "personal" && !hasWorkspaceOrg;
+
+  /**
+   * CV extract must not use the workspace edge function for personal-primary users who have no
+   * effective workspace membership — even if `activeOrgId` is stale/truthy in shell state.
+   * Workspace users (or personal users in an org context) use `workspace` + organisationId.
+   */
+  const cvImportMode: "workspace" | "personal" =
+    primaryAccountType === "personal" && !activeWorkspaceMembership
+      ? "personal"
+      : hasWorkspaceOrg
+        ? "workspace"
+        : "personal";
+  const cvImportActiveOrgId =
+    cvImportMode === "personal" ? null : activeOrgId?.trim() ?? null;
+  /** Null = personal-account evidence rows (organisation_id IS NULL). */
+  const qualCertOrgKey = activeOrgId?.trim() ? activeOrgId.trim() : null;
+
   return (
     <div
+      className={styles.shell}
       style={{
-        maxWidth: 720,
         display: "flex",
         flexDirection: "column",
         gap: 24,
@@ -905,10 +1567,683 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
         </p>
       </header>
 
+      {isPersonalNoWorkspace && experiences.length === 0 ? (
+        <div
+          style={{
+            ...card,
+            borderStyle: "dashed",
+            borderColor: borderSubtle,
+          }}
+        >
+          <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: text }}>
+            You have not added any experience yet.
+          </p>
+          <p
+            style={{
+              margin: "10px 0 0",
+              fontSize: 14,
+              color: mutedColor,
+              lineHeight: 1.55,
+            }}
+          >
+            Use <strong style={{ color: text }}>Import from CV</strong> below to
+            extract roles from a PDF or DOCX, or add a role with{" "}
+            <strong style={{ color: text }}>Add entry</strong> under Work
+            experience. You can also add roles from{" "}
+            <strong style={{ color: text }}>My profile → Add from CV</strong> to
+            prefill your profile.
+          </p>
+        </div>
+      ) : null}
+
       {loadError ? (
         <p style={{ margin: 0, fontSize: 14, color: errorColor }}>{loadError}</p>
       ) : null}
 
+      <div className={styles.grid}>
+        <div className={styles.col}>
+      {storedCv ? (
+        <CurrentCvReference
+          storedCv={storedCv}
+          onReplace={() => setCvImportOpenRequest((n) => n + 1)}
+          onRemove={() => void removeStoredCv()}
+          removing={removingCv}
+        />
+      ) : null}
+
+      <CvImportFlow
+        importMode={cvImportMode}
+        activeOrgId={cvImportActiveOrgId}
+        userId={userId}
+        experiences={experiences}
+        qualifications={qualifications}
+        certifications={certifications}
+        projects={projects}
+        onReload={loadData}
+        openImportRequest={cvImportOpenRequest}
+        storedCv={storedCv}
+      />
+
+      {/* Qualifications (enduring credentials) */}
+      <section>
+        <div style={{ ...card, marginTop: 8 }}>
+          <button
+            type="button"
+            aria-expanded={qualificationsSectionOpen}
+            aria-controls="qualifications-section-panel"
+            id="qualifications-section-heading"
+            onClick={() => setQualificationsSectionOpen((o) => !o)}
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              padding: 0,
+              margin: 0,
+              cursor: "pointer",
+              textAlign: "left",
+              background: "transparent",
+              border: "none",
+              color: "inherit",
+              boxSizing: "border-box",
+            }}
+          >
+            <span
+              style={{
+                margin: 0,
+                fontSize: 17,
+                fontWeight: 600,
+                color: text,
+                letterSpacing: "-0.02em",
+              }}
+            >
+              Qualifications
+            </span>
+            <span
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                flexShrink: 0,
+              }}
+            >
+              <span style={{ fontSize: 13, color: mutedColor }}>
+                {qualifications.length}{" "}
+                {qualifications.length === 1 ? "item" : "items"}
+              </span>
+              <span
+                aria-hidden
+                style={{
+                  fontSize: 12,
+                  color: mutedColor,
+                  fontFamily: "system-ui, sans-serif",
+                }}
+              >
+                {qualificationsSectionOpen ? "\u25BC" : "\u25B6"}
+              </span>
+            </span>
+          </button>
+          {qualificationsSectionOpen ? (
+            <div
+              id="qualifications-section-panel"
+              role="region"
+              aria-labelledby="qualifications-section-heading"
+              style={{
+                marginTop: 12,
+                paddingTop: 12,
+                borderTop: `1px solid ${borderSubtle}`,
+              }}
+            >
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              justifyContent: "space-between",
+              gap: 10,
+              marginBottom: qualifications.length ? 14 : 0,
+            }}
+          >
+            <p style={{ margin: 0, fontSize: 13, color: mutedColor }}>
+              {qualCertOrgKey === null
+                ? "Personal qualifications live on your account (no workspace). Degrees, diplomas, professional courses, and other enduring credentials."
+                : "Degrees, diplomas, professional courses, and other enduring credentials (Scrum, PRINCE2, etc.)."}
+            </p>
+            <button
+              type="button"
+              onClick={openAddQualification}
+              style={{ ...btn, fontSize: 13 }}
+            >
+              Add qualification
+            </button>
+          </div>
+          {qualifications.length === 0 ? (
+            <p style={{ margin: 0, fontSize: 14, color: mutedColor }}>
+              {qualCertOrgKey === null
+                ? "No personal qualifications yet. Add one here or include them when you import a CV."
+                : "No qualifications recorded for this workspace yet."}
+            </p>
+          ) : (
+            <ul
+              style={{
+                margin: 0,
+                padding: 0,
+                listStyle: "none",
+                display: "flex",
+                flexDirection: "column",
+                gap: 0,
+              }}
+            >
+              {qualifications.map((q) => {
+                const expanded = expandedQualificationId === q.id;
+                return (
+                  <li
+                    key={q.id}
+                    style={{
+                      borderBottom: `1px solid ${border}`,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      aria-expanded={expanded}
+                      aria-label={
+                        expanded
+                          ? `Collapse ${q.title ?? "qualification"}`
+                          : `Expand ${q.title ?? "qualification"}`
+                      }
+                      onClick={() =>
+                        setExpandedQualificationId((prev) =>
+                          prev === q.id ? null : q.id
+                        )
+                      }
+                      style={{
+                        width: "100%",
+                        display: "flex",
+                        alignItems: "flex-start",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        padding: "12px 0",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        color: "inherit",
+                        background: "transparent",
+                        border: "none",
+                        boxSizing: "border-box",
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div
+                          style={{
+                            fontWeight: 600,
+                            fontSize: 14,
+                            color: text,
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          {q.title}
+                        </div>
+                        {q.issuer ? (
+                          <div
+                            style={{
+                              fontSize: 13,
+                              color: mutedColor,
+                              marginTop: 4,
+                            }}
+                          >
+                            {q.issuer}
+                          </div>
+                        ) : null}
+                        {q.date_achieved ? (
+                          <div
+                            style={{
+                              fontSize: 12,
+                              color: mutedColor,
+                              marginTop: 6,
+                            }}
+                          >
+                            Achieved {formatDate(q.date_achieved)}
+                          </div>
+                        ) : null}
+                      </div>
+                      <span
+                        aria-hidden
+                        style={{
+                          fontSize: 12,
+                          color: mutedColor,
+                          lineHeight: 1.4,
+                          flexShrink: 0,
+                          marginTop: 2,
+                          fontFamily: "system-ui, sans-serif",
+                        }}
+                      >
+                        {expanded ? "\u25BC" : "\u25B6"}
+                      </span>
+                    </button>
+                    {expanded ? (
+                      <div style={{ paddingBottom: 14, paddingTop: 2 }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            alignItems: "flex-start",
+                          }}
+                        >
+                          <div style={{ minWidth: 0, flex: "1 1 200px" }}>
+                            {!q.date_achieved ? (
+                              <div
+                                style={{
+                                  fontSize: 12,
+                                  color: mutedColor,
+                                  marginBottom: 8,
+                                }}
+                              >
+                                Date not set
+                              </div>
+                            ) : null}
+                            {q.qualification_type ? (
+                              <div
+                                style={{
+                                  fontSize: 12,
+                                  color: mutedColor,
+                                  marginBottom: 8,
+                                }}
+                              >
+                                Type:{" "}
+                                <span style={{ color: text }}>
+                                  {q.qualification_type}
+                                </span>
+                              </div>
+                            ) : null}
+                            {q.notes ? (
+                              <p
+                                style={{
+                                  margin: "0 0 8px",
+                                  fontSize: 13,
+                                  color: text,
+                                  lineHeight: 1.45,
+                                }}
+                              >
+                                {q.notes}
+                              </p>
+                            ) : null}
+                            {q.credential_url?.trim() ? (
+                              <a
+                                href={
+                                  /^https?:\/\//i.test(q.credential_url.trim())
+                                    ? q.credential_url.trim()
+                                    : `https://${q.credential_url.trim()}`
+                                }
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                  display: "inline-block",
+                                  fontSize: 12,
+                                  color: accent,
+                                }}
+                              >
+                                View credential link
+                              </a>
+                            ) : null}
+                          </div>
+                          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                            <button
+                              type="button"
+                              onClick={() => openEditQualification(q)}
+                              style={{
+                                ...btnGhost,
+                                fontSize: 12,
+                                padding: "6px 10px",
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void deleteQualification(q.id)}
+                              style={{
+                                ...btnGhost,
+                                fontSize: 12,
+                                padding: "6px 10px",
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+            </div>
+          ) : null}
+        </div>
+      </section>
+
+      {/* Certifications (renewable) */}
+      <section>
+        <div style={{ ...card, marginTop: 8 }}>
+          <button
+            type="button"
+            aria-expanded={certificationsSectionOpen}
+            aria-controls="certifications-section-panel"
+            id="certifications-section-heading"
+            onClick={() => setCertificationsSectionOpen((o) => !o)}
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              padding: 0,
+              margin: 0,
+              cursor: "pointer",
+              textAlign: "left",
+              background: "transparent",
+              border: "none",
+              color: "inherit",
+              boxSizing: "border-box",
+            }}
+          >
+            <span
+              style={{
+                margin: 0,
+                fontSize: 17,
+                fontWeight: 600,
+                color: text,
+                letterSpacing: "-0.02em",
+              }}
+            >
+              Certifications
+            </span>
+            <span
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                flexShrink: 0,
+                flexWrap: "wrap",
+                justifyContent: "flex-end",
+              }}
+            >
+              <span style={{ fontSize: 13, color: mutedColor }}>
+                {certifications.length}{" "}
+                {certifications.length === 1 ? "item" : "items"}
+                {certExpiringSoonCount > 0 ? (
+                  <>
+                    {" · "}
+                    <span style={{ color: "#e8c96a" }}>
+                      {certExpiringSoonCount} expiring soon
+                    </span>
+                  </>
+                ) : null}
+              </span>
+              <span
+                aria-hidden
+                style={{
+                  fontSize: 12,
+                  color: mutedColor,
+                  fontFamily: "system-ui, sans-serif",
+                }}
+              >
+                {certificationsSectionOpen ? "\u25BC" : "\u25B6"}
+              </span>
+            </span>
+          </button>
+          {certificationsSectionOpen ? (
+            <div
+              id="certifications-section-panel"
+              role="region"
+              aria-labelledby="certifications-section-heading"
+              style={{
+                marginTop: 12,
+                paddingTop: 12,
+                borderTop: `1px solid ${borderSubtle}`,
+              }}
+            >
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              justifyContent: "space-between",
+              gap: 10,
+              marginBottom: sortedCertifications.length ? 14 : 0,
+            }}
+          >
+            <p style={{ margin: 0, fontSize: 13, color: mutedColor }}>
+              {qualCertOrgKey === null
+                ? "Personal certifications: safety, compliance, and other credentials that may expire. Separate from qualifications above."
+                : "Safety, compliance, and other credentials that may expire and require renewal."}
+            </p>
+            <button
+              type="button"
+              onClick={openAddCertification}
+              style={{ ...btn, fontSize: 13 }}
+            >
+              Add certification
+            </button>
+          </div>
+          {certifications.length === 0 ? (
+            <p style={{ margin: 0, fontSize: 14, color: mutedColor }}>
+              {qualCertOrgKey === null
+                ? "No personal certifications yet. Add one here or include them when you import a CV."
+                : "No certifications recorded for this workspace yet."}
+            </p>
+          ) : (
+            <ul
+              style={{
+                margin: 0,
+                padding: 0,
+                listStyle: "none",
+                display: "flex",
+                flexDirection: "column",
+                gap: 0,
+              }}
+            >
+              {sortedCertifications.map((c) => {
+                const st = certificationRenewalStatus(c.expiry_date);
+                const badgeLabel = certificationStatusLabel(st);
+                const badgeColor =
+                  st === "expired"
+                    ? "#e87878"
+                    : st === "expiring_soon"
+                      ? "#e8c96a"
+                      : mutedColor;
+                const expanded = expandedCertificationId === c.id;
+                return (
+                  <li
+                    key={c.id}
+                    style={{
+                      borderBottom: `1px solid ${border}`,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      aria-expanded={expanded}
+                      aria-label={
+                        expanded
+                          ? `Collapse ${c.title ?? "certification"}`
+                          : `Expand ${c.title ?? "certification"}`
+                      }
+                      onClick={() =>
+                        setExpandedCertificationId((prev) =>
+                          prev === c.id ? null : c.id
+                        )
+                      }
+                      style={{
+                        width: "100%",
+                        display: "flex",
+                        alignItems: "flex-start",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        padding: "12px 0",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        color: "inherit",
+                        background: "transparent",
+                        border: "none",
+                        boxSizing: "border-box",
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            alignItems: "center",
+                            gap: 8,
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontWeight: 600,
+                              fontSize: 14,
+                              color: text,
+                              lineHeight: 1.35,
+                            }}
+                          >
+                            {c.title}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              padding: "2px 8px",
+                              borderRadius: 6,
+                              border: `1px solid ${border}`,
+                              color: badgeColor,
+                            }}
+                          >
+                            {badgeLabel}
+                          </span>
+                        </div>
+                        {c.issuer ? (
+                          <div
+                            style={{
+                              fontSize: 13,
+                              color: mutedColor,
+                              marginTop: 4,
+                            }}
+                          >
+                            {c.issuer}
+                          </div>
+                        ) : null}
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: mutedColor,
+                            marginTop: 6,
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          {c.issue_date
+                            ? `Issued ${formatDate(c.issue_date)}`
+                            : "Issue date not set"}
+                          {c.expiry_date
+                            ? ` · Expires ${formatDate(c.expiry_date)}`
+                            : " · No expiry date"}
+                          {!c.renewal_required ? " · Renewal not required" : ""}
+                        </div>
+                      </div>
+                      <span
+                        aria-hidden
+                        style={{
+                          fontSize: 12,
+                          color: mutedColor,
+                          lineHeight: 1.4,
+                          flexShrink: 0,
+                          marginTop: 2,
+                          fontFamily: "system-ui, sans-serif",
+                        }}
+                      >
+                        {expanded ? "\u25BC" : "\u25B6"}
+                      </span>
+                    </button>
+                    {expanded ? (
+                      <div style={{ paddingBottom: 14, paddingTop: 2 }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            alignItems: "flex-start",
+                          }}
+                        >
+                          <div style={{ minWidth: 0, flex: "1 1 200px" }}>
+                            {c.notes ? (
+                              <p
+                                style={{
+                                  margin: "0 0 8px",
+                                  fontSize: 13,
+                                  color: text,
+                                  lineHeight: 1.45,
+                                }}
+                              >
+                                {c.notes}
+                              </p>
+                            ) : null}
+                            {c.credential_url?.trim() ? (
+                              <a
+                                href={
+                                  /^https?:\/\//i.test(c.credential_url.trim())
+                                    ? c.credential_url.trim()
+                                    : `https://${c.credential_url.trim()}`
+                                }
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                  display: "inline-block",
+                                  fontSize: 12,
+                                  color: accent,
+                                }}
+                              >
+                                View credential link
+                              </a>
+                            ) : null}
+                          </div>
+                          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                            <button
+                              type="button"
+                              onClick={() => openEditCertification(c)}
+                              style={{
+                                ...btnGhost,
+                                fontSize: 12,
+                                padding: "6px 10px",
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void deleteCertification(c.id)}
+                              style={{
+                                ...btnGhost,
+                                fontSize: 12,
+                                padding: "6px 10px",
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+            </div>
+          ) : null}
+        </div>
+      </section>
+
+        </div>
+        <div className={styles.col}>
       {/* Work experience */}
       <section>
         <p style={{ ...sectionEyebrow, marginTop: 0 }}>Work experience</p>
@@ -936,7 +2271,9 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
           </div>
           {experiences.length === 0 ? (
             <p style={{ margin: 0, fontSize: 14, color: mutedColor }}>
-              No entries yet. Add a role to build your evidence layer.
+              {isPersonalNoWorkspace
+                ? "No roles yet. Import from CV above or use Add entry."
+                : "No entries yet. Add a role to build your evidence layer."}
             </p>
           ) : (
             <ul
@@ -946,697 +2283,533 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
                 listStyle: "none",
                 display: "flex",
                 flexDirection: "column",
-                gap: 14,
+                gap: 0,
               }}
             >
-              {experiences.map((row) => (
-                <li
-                  key={row.id}
-                  style={{
-                    paddingBottom: 14,
-                    borderBottom: `1px solid ${border}`,
-                  }}
-                >
-                  <div
+              {experiences.map((row) => {
+                const expanded = expandedExperienceId === row.id;
+                return (
+                  <li
+                    id={`my-exp-evidence-${row.id}`}
+                    key={row.id}
                     style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      justifyContent: "space-between",
-                      gap: 8,
-                      alignItems: "flex-start",
+                      borderBottom: `1px solid ${border}`,
                     }}
                   >
-                    <div style={{ minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontWeight: 600,
-                          fontSize: 15,
-                          color: text,
-                        }}
-                      >
-                        {row.role_title}
-                        {row.organisation_name
-                          ? ` · ${row.organisation_name}`
-                          : ""}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 13,
-                          color: mutedColor,
-                          marginTop: 4,
-                        }}
-                      >
-                        {dateRangeLabel(row)}
-                      </div>
-                      {row.description ? (
-                        <p
+                    <button
+                      type="button"
+                      aria-expanded={expanded}
+                      aria-label={
+                        expanded
+                          ? `Collapse ${row.role_title ?? "role"}`
+                          : `Expand ${row.role_title ?? "role"}`
+                      }
+                      onClick={() =>
+                        setExpandedExperienceId((prev) =>
+                          prev === row.id ? null : row.id
+                        )
+                      }
+                      style={{
+                        width: "100%",
+                        display: "flex",
+                        alignItems: "flex-start",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        padding: "12px 0",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        color: "inherit",
+                        background: "transparent",
+                        border: "none",
+                        boxSizing: "border-box",
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div
                           style={{
-                            margin: "8px 0 0",
-                            fontSize: 14,
+                            fontWeight: 600,
+                            fontSize: 15,
                             color: text,
-                            lineHeight: 1.45,
+                            lineHeight: 1.35,
                           }}
                         >
-                          {row.description}
-                        </p>
-                      ) : null}
-                      {row.industry?.trim() ? (
-                        <p
+                          {row.role_title}
+                          {row.organisation_name
+                            ? ` · ${row.organisation_name}`
+                            : ""}
+                        </div>
+                        <div
                           style={{
-                            margin: "8px 0 0",
-                            fontSize: 12,
+                            fontSize: 13,
                             color: mutedColor,
+                            marginTop: 4,
                           }}
                         >
-                          Industry:{" "}
-                          <span style={{ color: text }}>{row.industry}</span>
-                        </p>
-                      ) : null}
-                      {(row.skills?.length ?? 0) > 0 ? (
+                          {dateRangeLabel(row)}
+                        </div>
+                      </div>
+                      <span
+                        aria-hidden
+                        style={{
+                          fontSize: 12,
+                          color: mutedColor,
+                          lineHeight: 1.4,
+                          flexShrink: 0,
+                          marginTop: 2,
+                          fontFamily: "system-ui, sans-serif",
+                        }}
+                      >
+                        {expanded ? "\u25BC" : "\u25B6"}
+                      </span>
+                    </button>
+                    {expanded ? (
+                      <div
+                        style={{
+                          paddingBottom: 14,
+                          paddingTop: 2,
+                        }}
+                      >
                         <div
                           style={{
                             display: "flex",
                             flexWrap: "wrap",
-                            gap: 6,
-                            marginTop: 10,
+                            justifyContent: "space-between",
+                            gap: 8,
+                            alignItems: "flex-start",
                           }}
                         >
-                          {(row.skills ?? []).map((t) => (
-                            <span
-                              key={t}
-                              style={{
-                                fontSize: 11,
-                                padding: "4px 8px",
-                                borderRadius: 6,
-                                backgroundColor: bg,
-                                border: `1px solid ${border}`,
-                                color: text,
-                              }}
-                            >
-                              {t}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                    <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                      <button
-                        type="button"
-                        onClick={() => openEditExperience(row)}
-                        style={{ ...btnGhost, fontSize: 12, padding: "6px 10px" }}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void deleteExperience(row.id)}
-                        style={{ ...btnGhost, fontSize: 12, padding: "6px 10px" }}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      marginTop: 14,
-                      paddingLeft: 12,
-                      marginLeft: 4,
-                      borderLeft: `2px solid ${borderSubtle}`,
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        gap: 8,
-                        marginBottom: 8,
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 600,
-                          letterSpacing: "0.05em",
-                          textTransform: "uppercase",
-                          color: mutedColor,
-                        }}
-                      >
-                        Projects
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => openAddProject(row.id)}
-                        style={{
-                          ...btnGhost,
-                          fontSize: 12,
-                          padding: "5px 10px",
-                        }}
-                      >
-                        + Add project
-                      </button>
-                    </div>
-                    {(projectsByExperienceId[row.id] ?? []).length === 0 ? (
-                      <p style={{ margin: 0, fontSize: 13, color: mutedColor }}>
-                        No projects added yet.
-                      </p>
-                    ) : (
-                      <ul
-                        style={{
-                          margin: 0,
-                          padding: 0,
-                          listStyle: "none",
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 10,
-                        }}
-                      >
-                        {(projectsByExperienceId[row.id] ?? []).map((proj) => (
-                          <li
-                            key={proj.id}
-                            style={{
-                              padding: "10px 12px",
-                              borderRadius: 8,
-                              backgroundColor: bg,
-                              border: `1px solid ${border}`,
-                            }}
-                          >
-                            <div
-                              style={{
-                                display: "flex",
-                                flexWrap: "wrap",
-                                justifyContent: "space-between",
-                                gap: 8,
-                                alignItems: "flex-start",
-                              }}
-                            >
-                              <div style={{ minWidth: 0 }}>
-                                <div
-                                  style={{
-                                    fontWeight: 600,
-                                    fontSize: 14,
-                                    color: text,
-                                  }}
-                                >
-                                  {proj.project_name?.trim() || "Untitled project"}
-                                </div>
-                                {proj.client?.trim() ? (
-                                  <div
-                                    style={{
-                                      fontSize: 12,
-                                      color: mutedColor,
-                                      marginTop: 4,
-                                    }}
-                                  >
-                                    Client:{" "}
-                                    <span style={{ color: text }}>
-                                      {proj.client}
-                                    </span>
-                                  </div>
-                                ) : null}
-                                {proj.role?.trim() ? (
-                                  <div
-                                    style={{
-                                      fontSize: 12,
-                                      color: mutedColor,
-                                      marginTop: 4,
-                                    }}
-                                  >
-                                    Role:{" "}
-                                    <span style={{ color: text }}>
-                                      {proj.role}
-                                    </span>
-                                  </div>
-                                ) : null}
-                                {projectDateRangeLabel(proj) ? (
-                                  <div
-                                    style={{
-                                      fontSize: 12,
-                                      color: mutedColor,
-                                      marginTop: 4,
-                                    }}
-                                  >
-                                    {projectDateRangeLabel(proj)}
-                                  </div>
-                                ) : null}
-                                {proj.description?.trim() ? (
-                                  <p
-                                    style={{
-                                      margin: "8px 0 0",
-                                      fontSize: 13,
-                                      color: text,
-                                      lineHeight: 1.45,
-                                    }}
-                                  >
-                                    {truncateText(proj.description, 220)}
-                                  </p>
-                                ) : null}
-                                {proj.industry?.trim() ? (
-                                  <p
-                                    style={{
-                                      margin: "6px 0 0",
-                                      fontSize: 11,
-                                      color: mutedColor,
-                                    }}
-                                  >
-                                    Industry:{" "}
-                                    <span style={{ color: text }}>
-                                      {proj.industry}
-                                    </span>
-                                  </p>
-                                ) : null}
-                                {(proj.skills?.length ?? 0) > 0 ? (
-                                  <div
-                                    style={{
-                                      display: "flex",
-                                      flexWrap: "wrap",
-                                      gap: 6,
-                                      marginTop: 8,
-                                    }}
-                                  >
-                                    {(proj.skills ?? []).map((t) => (
-                                      <span
-                                        key={t}
-                                        style={{
-                                          fontSize: 10,
-                                          padding: "3px 7px",
-                                          borderRadius: 6,
-                                          backgroundColor: surface,
-                                          border: `1px solid ${borderSubtle}`,
-                                          color: text,
-                                        }}
-                                      >
-                                        {t}
-                                      </span>
-                                    ))}
-                                  </div>
-                                ) : null}
-                              </div>
+                          <div style={{ minWidth: 0, flex: "1 1 200px" }}>
+                            {row.description ? (
+                              <p
+                                style={{
+                                  margin: "0 0 8px",
+                                  fontSize: 14,
+                                  color: text,
+                                  lineHeight: 1.45,
+                                }}
+                              >
+                                {row.description}
+                              </p>
+                            ) : null}
+                            {row.industry?.trim() ? (
+                              <p
+                                style={{
+                                  margin: "0 0 8px",
+                                  fontSize: 12,
+                                  color: mutedColor,
+                                }}
+                              >
+                                Industry:{" "}
+                                <span style={{ color: text }}>
+                                  {row.industry}
+                                </span>
+                              </p>
+                            ) : null}
+                            {(row.skills?.length ?? 0) > 0 ? (
                               <div
                                 style={{
                                   display: "flex",
-                                  gap: 4,
-                                  flexShrink: 0,
+                                  flexWrap: "wrap",
+                                  gap: 6,
+                                  marginBottom: 6,
                                 }}
                               >
-                                <button
-                                  type="button"
-                                  onClick={() => openEditProject(proj)}
-                                  style={{
-                                    ...btnGhost,
-                                    fontSize: 11,
-                                    padding: "5px 8px",
-                                  }}
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => void deleteProject(proj.id)}
-                                  style={{
-                                    ...btnGhost,
-                                    fontSize: 11,
-                                    padding: "5px 8px",
-                                  }}
-                                >
-                                  Delete
-                                </button>
+                                {(row.skills ?? []).map((t) => (
+                                  <span
+                                    key={`sk-${t}`}
+                                    style={{
+                                      fontSize: 11,
+                                      padding: "4px 8px",
+                                      borderRadius: 6,
+                                      backgroundColor: bg,
+                                      border: `1px solid ${border}`,
+                                      color: text,
+                                    }}
+                                  >
+                                    {t}
+                                  </span>
+                                ))}
                               </div>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
-
-      {/* Skill summary (derived) */}
-      <section>
-        <p style={{ ...sectionEyebrow, marginTop: 0 }}>Skill summary</p>
-        <p style={{ margin: "4px 0 10px", fontSize: 12, color: mutedColor }}>
-          Derived from tags on your experience entries — indicative only, not
-          formal competency data.
-        </p>
-        <div style={{ ...card, marginTop: 0 }}>
-          {skillSummary.length === 0 ? (
-            <p style={{ margin: 0, fontSize: 14, color: mutedColor }}>
-              Tag skills on work entries to see aggregated counts here.
-            </p>
-          ) : (
-            <ul
-              style={{
-                margin: 0,
-                padding: 0,
-                listStyle: "none",
-                display: "grid",
-                gap: 8,
-              }}
-            >
-              {skillSummary.map((s) => (
-                <li
-                  key={s.label}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    fontSize: 14,
-                    color: text,
-                  }}
-                >
-                  <span>{s.label}</span>
-                  <span style={{ fontSize: 13, color: mutedColor }}>
-                    {s.count} {s.count === 1 ? "role" : "roles"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
-
-      {/* Industry (derived) */}
-      <section>
-        <p style={{ ...sectionEyebrow, marginTop: 0 }}>Industry experience</p>
-        <p style={{ margin: "4px 0 10px", fontSize: 12, color: mutedColor }}>
-          Derived from optional industry labels on entries — useful for future
-          fit and mobility views.
-        </p>
-        <div style={{ ...card, marginTop: 0 }}>
-          {industrySummary.length === 0 ? (
-            <p style={{ margin: 0, fontSize: 14, color: mutedColor }}>
-              Add an industry label to a work entry to see counts here.
-            </p>
-          ) : (
-            <ul
-              style={{
-                margin: 0,
-                padding: 0,
-                listStyle: "none",
-                display: "grid",
-                gap: 8,
-              }}
-            >
-              {industrySummary.map((s) => (
-                <li
-                  key={s.label}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    fontSize: 14,
-                    color: text,
-                  }}
-                >
-                  <span>{s.label}</span>
-                  <span style={{ fontSize: 13, color: mutedColor }}>
-                    {s.count} {s.count === 1 ? "entry" : "entries"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
-
-      {/* Qualifications (enduring credentials) */}
-      <section>
-        <p style={{ ...sectionEyebrow, marginTop: 0 }}>Qualifications</p>
-        <div style={{ ...card, marginTop: 8 }}>
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              justifyContent: "space-between",
-              gap: 10,
-              marginBottom: qualifications.length ? 14 : 0,
-            }}
-          >
-            <p style={{ margin: 0, fontSize: 13, color: mutedColor }}>
-              Degrees, diplomas, professional courses, and other enduring
-              credentials (Scrum, PRINCE2, etc.).
-            </p>
-            <button
-              type="button"
-              onClick={openAddQualification}
-              style={{ ...btn, fontSize: 13 }}
-            >
-              Add qualification
-            </button>
-          </div>
-          {qualifications.length === 0 ? (
-            <p style={{ margin: 0, fontSize: 14, color: mutedColor }}>
-              No qualifications recorded for this workspace yet.
-            </p>
-          ) : (
-            <ul
-              style={{
-                margin: 0,
-                padding: 0,
-                listStyle: "none",
-                display: "flex",
-                flexDirection: "column",
-                gap: 12,
-              }}
-            >
-              {qualifications.map((q) => (
-                <li
-                  key={q.id}
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    justifyContent: "space-between",
-                    gap: 10,
-                    paddingBottom: 12,
-                    borderBottom: `1px solid ${border}`,
-                  }}
-                >
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 14, color: text }}>
-                      {q.title}
-                    </div>
-                    {q.issuer ? (
-                      <div style={{ fontSize: 13, color: mutedColor, marginTop: 4 }}>
-                        {q.issuer}
-                      </div>
-                    ) : null}
-                    {q.qualification_type ? (
-                      <div style={{ fontSize: 12, color: mutedColor, marginTop: 4 }}>
-                        {q.qualification_type}
-                      </div>
-                    ) : null}
-                    <div style={{ fontSize: 12, color: mutedColor, marginTop: 6 }}>
-                      {q.date_achieved
-                        ? `Achieved ${formatDate(q.date_achieved)}`
-                        : "Date not set"}
-                    </div>
-                    {q.notes ? (
-                      <p
-                        style={{
-                          margin: "8px 0 0",
-                          fontSize: 13,
-                          color: text,
-                          lineHeight: 1.45,
-                        }}
-                      >
-                        {q.notes}
-                      </p>
-                    ) : null}
-                    {q.credential_url?.trim() ? (
-                      <a
-                        href={
-                          /^https?:\/\//i.test(q.credential_url.trim())
-                            ? q.credential_url.trim()
-                            : `https://${q.credential_url.trim()}`
-                        }
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{
-                          display: "inline-block",
-                          marginTop: 8,
-                          fontSize: 12,
-                          color: accent,
-                        }}
-                      >
-                        View credential link
-                      </a>
-                    ) : null}
-                  </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button
-                      type="button"
-                      onClick={() => openEditQualification(q)}
-                      style={{ ...btnGhost, fontSize: 12, padding: "6px 10px" }}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void deleteQualification(q.id)}
-                      style={{ ...btnGhost, fontSize: 12, padding: "6px 10px" }}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
-
-      {/* Certifications (renewable) */}
-      <section>
-        <p style={{ ...sectionEyebrow, marginTop: 0 }}>Certifications</p>
-        <div style={{ ...card, marginTop: 8 }}>
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              justifyContent: "space-between",
-              gap: 10,
-              marginBottom: sortedCertifications.length ? 14 : 0,
-            }}
-          >
-            <p style={{ margin: 0, fontSize: 13, color: mutedColor }}>
-              Safety, compliance, and other credentials that may expire and
-              require renewal.
-            </p>
-            <button
-              type="button"
-              onClick={openAddCertification}
-              style={{ ...btn, fontSize: 13 }}
-            >
-              Add certification
-            </button>
-          </div>
-          {certifications.length === 0 ? (
-            <p style={{ margin: 0, fontSize: 14, color: mutedColor }}>
-              No certifications recorded for this workspace yet.
-            </p>
-          ) : (
-            <ul
-              style={{
-                margin: 0,
-                padding: 0,
-                listStyle: "none",
-                display: "flex",
-                flexDirection: "column",
-                gap: 12,
-              }}
-            >
-              {sortedCertifications.map((c) => {
-                const st = certificationRenewalStatus(c.expiry_date);
-                const badgeLabel = certificationStatusLabel(st);
-                const badgeColor =
-                  st === "expired"
-                    ? "#e87878"
-                    : st === "expiring_soon"
-                      ? "#e8c96a"
-                      : mutedColor;
-                return (
-                  <li
-                    key={c.id}
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      justifyContent: "space-between",
-                      gap: 10,
-                      paddingBottom: 12,
-                      borderBottom: `1px solid ${border}`,
-                    }}
-                  >
-                    <div>
-                      <div
-                        style={{
-                          display: "flex",
-                          flexWrap: "wrap",
-                          alignItems: "center",
-                          gap: 8,
-                        }}
-                      >
-                        <span style={{ fontWeight: 600, fontSize: 14, color: text }}>
-                          {c.title}
-                        </span>
-                        <span
-                          style={{
-                            fontSize: 11,
-                            padding: "2px 8px",
-                            borderRadius: 6,
-                            border: `1px solid ${border}`,
-                            color: badgeColor,
-                          }}
-                        >
-                          {badgeLabel}
-                        </span>
-                      </div>
-                      {c.issuer ? (
-                        <div style={{ fontSize: 13, color: mutedColor, marginTop: 4 }}>
-                          {c.issuer}
+                            ) : null}
+                            {(row.methods?.length ?? 0) > 0 ? (
+                              <div
+                                style={{
+                                  display: "flex",
+                                  flexWrap: "wrap",
+                                  gap: 6,
+                                  marginBottom: 6,
+                                }}
+                              >
+                                {(row.methods ?? []).map((t) => (
+                                  <span
+                                    key={`m-${t}`}
+                                    style={{
+                                      fontSize: 11,
+                                      padding: "4px 8px",
+                                      borderRadius: 6,
+                                      backgroundColor: surface,
+                                      border: `1px solid ${borderSubtle}`,
+                                      color: text,
+                                    }}
+                                  >
+                                    {t}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                            {(row.tools?.length ?? 0) > 0 ? (
+                              <div
+                                style={{
+                                  display: "flex",
+                                  flexWrap: "wrap",
+                                  gap: 6,
+                                  marginBottom: 10,
+                                }}
+                              >
+                                {(row.tools ?? []).map((t) => (
+                                  <span
+                                    key={`to-${t}`}
+                                    style={{
+                                      fontSize: 11,
+                                      padding: "4px 8px",
+                                      borderRadius: 6,
+                                      backgroundColor: bg,
+                                      border: `1px dashed ${borderSubtle}`,
+                                      color: text,
+                                    }}
+                                  >
+                                    {t}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: 8,
+                              flexShrink: 0,
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => openEditExperience(row)}
+                              style={{
+                                ...btnGhost,
+                                fontSize: 12,
+                                padding: "6px 10px",
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setRefinerExperience(row)}
+                              style={{
+                                ...btnGhost,
+                                fontSize: 12,
+                                padding: "6px 10px",
+                              }}
+                            >
+                              Refine evidence
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void deleteExperience(row.id)}
+                              style={{
+                                ...btnGhost,
+                                fontSize: 12,
+                                padding: "6px 10px",
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </div>
                         </div>
-                      ) : null}
-                      <div style={{ fontSize: 12, color: mutedColor, marginTop: 6 }}>
-                        {c.issue_date
-                          ? `Issued ${formatDate(c.issue_date)}`
-                          : "Issue date not set"}
-                        {c.expiry_date
-                          ? ` · Expires ${formatDate(c.expiry_date)}`
-                          : " · No expiry date"}
-                        {!c.renewal_required ? " · Renewal not required" : ""}
+                        <div
+                          style={{
+                            marginTop: 4,
+                            paddingLeft: 12,
+                            marginLeft: 4,
+                            borderLeft: `2px solid ${borderSubtle}`,
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              gap: 8,
+                              marginBottom: 8,
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 600,
+                                letterSpacing: "0.05em",
+                                textTransform: "uppercase",
+                                color: mutedColor,
+                              }}
+                            >
+                              Projects
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => openAddProject(row.id)}
+                              style={{
+                                ...btnGhost,
+                                fontSize: 12,
+                                padding: "5px 10px",
+                              }}
+                            >
+                              + Add project
+                            </button>
+                          </div>
+                          {(projectsByExperienceId[row.id] ?? []).length ===
+                          0 ? (
+                            <p
+                              style={{
+                                margin: 0,
+                                fontSize: 13,
+                                color: mutedColor,
+                              }}
+                            >
+                              No projects added yet.
+                            </p>
+                          ) : (
+                            <ul
+                              style={{
+                                margin: 0,
+                                padding: 0,
+                                listStyle: "none",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 10,
+                              }}
+                            >
+                              {(projectsByExperienceId[row.id] ?? []).map(
+                                (proj) => (
+                                  <li
+                                    key={proj.id}
+                                    style={{
+                                      padding: "10px 12px",
+                                      borderRadius: 8,
+                                      backgroundColor: bg,
+                                      border: `1px solid ${border}`,
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        flexWrap: "wrap",
+                                        justifyContent: "space-between",
+                                        gap: 8,
+                                        alignItems: "flex-start",
+                                      }}
+                                    >
+                                      <div style={{ minWidth: 0 }}>
+                                        <div
+                                          style={{
+                                            fontWeight: 600,
+                                            fontSize: 14,
+                                            color: text,
+                                          }}
+                                        >
+                                          {proj.project_name?.trim() ||
+                                            "Untitled project"}
+                                        </div>
+                                        {proj.client?.trim() ? (
+                                          <div
+                                            style={{
+                                              fontSize: 12,
+                                              color: mutedColor,
+                                              marginTop: 4,
+                                            }}
+                                          >
+                                            Client:{" "}
+                                            <span style={{ color: text }}>
+                                              {proj.client}
+                                            </span>
+                                          </div>
+                                        ) : null}
+                                        {proj.role?.trim() ? (
+                                          <div
+                                            style={{
+                                              fontSize: 12,
+                                              color: mutedColor,
+                                              marginTop: 4,
+                                            }}
+                                          >
+                                            Role:{" "}
+                                            <span style={{ color: text }}>
+                                              {proj.role}
+                                            </span>
+                                          </div>
+                                        ) : null}
+                                        {projectDateRangeLabel(proj) ? (
+                                          <div
+                                            style={{
+                                              fontSize: 12,
+                                              color: mutedColor,
+                                              marginTop: 4,
+                                            }}
+                                          >
+                                            {projectDateRangeLabel(proj)}
+                                          </div>
+                                        ) : null}
+                                        {proj.description?.trim() ? (
+                                          <p
+                                            style={{
+                                              margin: "8px 0 0",
+                                              fontSize: 13,
+                                              color: text,
+                                              lineHeight: 1.45,
+                                            }}
+                                          >
+                                            {truncateText(
+                                              proj.description,
+                                              220
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {proj.industry?.trim() ? (
+                                          <p
+                                            style={{
+                                              margin: "6px 0 0",
+                                              fontSize: 11,
+                                              color: mutedColor,
+                                            }}
+                                          >
+                                            Industry:{" "}
+                                            <span style={{ color: text }}>
+                                              {proj.industry}
+                                            </span>
+                                          </p>
+                                        ) : null}
+                                        {(proj.skills?.length ?? 0) > 0 ? (
+                                          <div
+                                            style={{
+                                              display: "flex",
+                                              flexWrap: "wrap",
+                                              gap: 6,
+                                              marginTop: 8,
+                                            }}
+                                          >
+                                            {(proj.skills ?? []).map((t) => (
+                                              <span
+                                                key={`psk-${t}`}
+                                                style={{
+                                                  fontSize: 10,
+                                                  padding: "3px 7px",
+                                                  borderRadius: 6,
+                                                  backgroundColor: surface,
+                                                  border: `1px solid ${borderSubtle}`,
+                                                  color: text,
+                                                }}
+                                              >
+                                                {t}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        ) : null}
+                                        {(proj.methods?.length ?? 0) > 0 ? (
+                                          <div
+                                            style={{
+                                              display: "flex",
+                                              flexWrap: "wrap",
+                                              gap: 6,
+                                              marginTop: 6,
+                                            }}
+                                          >
+                                            {(proj.methods ?? []).map((t) => (
+                                              <span
+                                                key={`pm-${t}`}
+                                                style={{
+                                                  fontSize: 10,
+                                                  padding: "3px 7px",
+                                                  borderRadius: 6,
+                                                  backgroundColor: bg,
+                                                  border: `1px solid ${borderSubtle}`,
+                                                  color: text,
+                                                }}
+                                              >
+                                                {t}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        ) : null}
+                                        {(proj.tools?.length ?? 0) > 0 ? (
+                                          <div
+                                            style={{
+                                              display: "flex",
+                                              flexWrap: "wrap",
+                                              gap: 6,
+                                              marginTop: 6,
+                                            }}
+                                          >
+                                            {(proj.tools ?? []).map((t) => (
+                                              <span
+                                                key={`pto-${t}`}
+                                                style={{
+                                                  fontSize: 10,
+                                                  padding: "3px 7px",
+                                                  borderRadius: 6,
+                                                  backgroundColor: surface,
+                                                  border: `1px dashed ${borderSubtle}`,
+                                                  color: text,
+                                                }}
+                                              >
+                                                {t}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                      <div
+                                        style={{
+                                          display: "flex",
+                                          gap: 4,
+                                          flexShrink: 0,
+                                        }}
+                                      >
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            openEditProject(proj)
+                                          }
+                                          style={{
+                                            ...btnGhost,
+                                            fontSize: 11,
+                                            padding: "5px 8px",
+                                          }}
+                                        >
+                                          Edit
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            void deleteProject(proj.id)
+                                          }
+                                          style={{
+                                            ...btnGhost,
+                                            fontSize: 11,
+                                            padding: "5px 8px",
+                                          }}
+                                        >
+                                          Delete
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </li>
+                                )
+                              )}
+                            </ul>
+                          )}
+                        </div>
                       </div>
-                      {c.notes ? (
-                        <p
-                          style={{
-                            margin: "8px 0 0",
-                            fontSize: 13,
-                            color: text,
-                            lineHeight: 1.45,
-                          }}
-                        >
-                          {c.notes}
-                        </p>
-                      ) : null}
-                      {c.credential_url?.trim() ? (
-                        <a
-                          href={
-                            /^https?:\/\//i.test(c.credential_url.trim())
-                              ? c.credential_url.trim()
-                              : `https://${c.credential_url.trim()}`
-                          }
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{
-                            display: "inline-block",
-                            marginTop: 8,
-                            fontSize: 12,
-                            color: accent,
-                          }}
-                        >
-                          View credential link
-                        </a>
-                      ) : null}
-                    </div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button
-                        type="button"
-                        onClick={() => openEditCertification(c)}
-                        style={{ ...btnGhost, fontSize: 12, padding: "6px 10px" }}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void deleteCertification(c.id)}
-                        style={{ ...btnGhost, fontSize: 12, padding: "6px 10px" }}
-                      >
-                        Delete
-                      </button>
-                    </div>
+                    ) : null}
                   </li>
                 );
               })}
@@ -1644,6 +2817,200 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
           )}
         </div>
       </section>
+
+      {/* Evidence tags: skills, methods, tools (arrays) + industries (domain context) */}
+      <section>
+        <p style={{ ...sectionEyebrow, marginTop: 0 }}>
+          Evidence tags
+        </p>
+        <p style={{ margin: "4px 0 10px", fontSize: 12, color: mutedColor }}>
+          Analytical tags linked to roles and projects (including CV import). Four
+          categories: specific <strong style={{ color: text }}>skills</strong>,
+          transferable <strong style={{ color: text }}>methods</strong>, named{" "}
+          <strong style={{ color: text }}>tools</strong>, and{" "}
+          <strong style={{ color: text }}>industry</strong> context. Read-only here
+          — edit the evidence row to change values. Suitable for later AI
+          suggestions tied to a single role or project.
+        </p>
+        <div
+          style={{
+            ...card,
+            marginTop: 0,
+            padding: "12px 14px",
+          }}
+        >
+          {!hasAnyEvidenceTags ? (
+            <p
+              style={{
+                margin: 0,
+                fontSize: 13,
+                color: mutedColor,
+                lineHeight: 1.55,
+              }}
+            >
+              No tags yet. Add skills, methods, tools, or industries to your
+              roles or import a CV.
+            </p>
+          ) : (
+            <>
+              {showEvidenceTagTopAllToggle ? (
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    justifyContent: "flex-end",
+                    gap: 6,
+                    marginBottom: 12,
+                  }}
+                  role="group"
+                  aria-label="Tag list scope"
+                >
+                  <button
+                    type="button"
+                    aria-pressed={evidenceTagSummaryScope === "top"}
+                    onClick={() => setEvidenceTagSummaryScope("top")}
+                    style={{
+                      ...btnGhost,
+                      fontSize: 11,
+                      padding: "4px 9px",
+                      opacity: evidenceTagSummaryScope === "top" ? 1 : 0.65,
+                      borderColor:
+                        evidenceTagSummaryScope === "top"
+                          ? "rgba(110, 176, 240, 0.45)"
+                          : borderSubtle,
+                    }}
+                  >
+                    Top tags
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={evidenceTagSummaryScope === "all"}
+                    onClick={() => setEvidenceTagSummaryScope("all")}
+                    style={{
+                      ...btnGhost,
+                      fontSize: 11,
+                      padding: "4px 9px",
+                      opacity: evidenceTagSummaryScope === "all" ? 1 : 0.65,
+                      borderColor:
+                        evidenceTagSummaryScope === "all"
+                          ? "rgba(110, 176, 240, 0.45)"
+                          : borderSubtle,
+                    }}
+                  >
+                    All tags
+                  </button>
+                </div>
+              ) : null}
+
+              <div
+                role="tablist"
+                aria-label="Evidence tag categories"
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 8,
+                  marginBottom: 14,
+                  rowGap: 8,
+                }}
+              >
+                {(
+                  [
+                    ["skills", "Skills", skillSummary.length],
+                    ["methods", "Methods", methodSummary.length],
+                    ["tools", "Tools", toolSummary.length],
+                    ["industries", "Industries", industrySummary.length],
+                  ] as const
+                ).map(([id, label, count]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    aria-selected={evidenceTagTab === id}
+                    id={`evidence-tag-tab-${id}`}
+                    onClick={() => selectEvidenceTagTab(id)}
+                    style={{
+                      ...btnGhost,
+                      fontSize: 12,
+                      padding: "6px 12px",
+                      fontWeight: evidenceTagTab === id ? 600 : 500,
+                      borderColor:
+                        evidenceTagTab === id ? accent : borderSubtle,
+                      opacity: evidenceTagTab === id ? 1 : 0.8,
+                    }}
+                  >
+                    {label} ({count})
+                  </button>
+                ))}
+              </div>
+
+              <div
+                key={evidenceTagTab}
+                role="tabpanel"
+                aria-labelledby={`evidence-tag-tab-${evidenceTagTab}`}
+                className={styles.evidenceTagTabPanel}
+              >
+                {evidenceTagTab === "skills" ? (
+                  <EvidenceTagChipPanel
+                    rows={skillSummaryDisplayed}
+                    details={skillEvidenceDetails}
+                    expandedKey={expandedSkillDetailKey}
+                    onToggleKey={setExpandedSkillDetailKey}
+                    onRevealRole={revealExperienceRow}
+                    detailKeyForLabel={(l) =>
+                      normalizeSkillLabel(l).toLowerCase()
+                    }
+                    emptyHint="No skills in this view. Add tags on a role or project, switch to All tags, or import a CV."
+                    whereBlurb="Appears on — open the role or project to edit tags."
+                  />
+                ) : null}
+                {evidenceTagTab === "methods" ? (
+                  <EvidenceTagChipPanel
+                    rows={methodSummaryDisplayed}
+                    details={methodEvidenceDetails}
+                    expandedKey={expandedMethodDetailKey}
+                    onToggleKey={setExpandedMethodDetailKey}
+                    onRevealRole={revealExperienceRow}
+                    detailKeyForLabel={(l) =>
+                      normalizeSkillLabel(l).toLowerCase()
+                    }
+                    emptyHint="No methods in this view. Add methods on a role or project, switch to All tags, or import a CV."
+                    whereBlurb="Appears on — open the role or project to edit tags."
+                  />
+                ) : null}
+                {evidenceTagTab === "tools" ? (
+                  <EvidenceTagChipPanel
+                    rows={toolSummaryDisplayed}
+                    details={toolEvidenceDetails}
+                    expandedKey={expandedToolDetailKey}
+                    onToggleKey={setExpandedToolDetailKey}
+                    onRevealRole={revealExperienceRow}
+                    detailKeyForLabel={(l) =>
+                      normalizeSkillLabel(l).toLowerCase()
+                    }
+                    emptyHint="No tools in this view. Add tools on a role or project, switch to All tags, or import a CV."
+                    whereBlurb="Appears on — open the role or project to edit tags."
+                  />
+                ) : null}
+                {evidenceTagTab === "industries" ? (
+                  <EvidenceTagChipPanel
+                    rows={industrySummaryDisplayed}
+                    details={industryEvidenceDetails}
+                    expandedKey={expandedIndustryDetailKey}
+                    onToggleKey={setExpandedIndustryDetailKey}
+                    onRevealRole={revealExperienceRow}
+                    detailKeyForLabel={(l) => l.trim().toLowerCase()}
+                    emptyHint="No industries in this view. Set an industry on a role or project, or switch to All tags."
+                    whereBlurb="Appears on — edit industry on the role or project."
+                  />
+                ) : null}
+              </div>
+            </>
+          )}
+        </div>
+      </section>
+
+        </div>
+      </div>
 
       {/* Experience modal */}
       {expModal !== "closed" ? (
@@ -1799,7 +3166,10 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
             <SkillTagInput
               label={
                 <>
-                  Skills <span style={{ fontWeight: 400 }}>(optional)</span>
+                  Skills{" "}
+                  <span style={{ fontWeight: 400 }}>
+                    (optional — specific capabilities)
+                  </span>
                 </>
               }
               skills={expForm.skills}
@@ -1807,7 +3177,35 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
                 setExpForm((f) => ({ ...f, skills }))
               }
               suggestionPool={skillSuggestionPool}
-              placeholder="Type a skill and press Enter"
+              placeholder="e.g. Requirements workshops, User story mapping"
+            />
+            <SkillTagInput
+              label={
+                <>
+                  Methods / practices{" "}
+                  <span style={{ fontWeight: 400 }}>(optional)</span>
+                </>
+              }
+              skills={expForm.methods}
+              onSkillsChange={(methods) =>
+                setExpForm((f) => ({ ...f, methods }))
+              }
+              suggestionPool={methodSuggestionPool}
+              placeholder="e.g. Scrum, Design Thinking"
+            />
+            <SkillTagInput
+              label={
+                <>
+                  Tools / platforms{" "}
+                  <span style={{ fontWeight: 400 }}>(optional)</span>
+                </>
+              }
+              skills={expForm.tools}
+              onSkillsChange={(tools) =>
+                setExpForm((f) => ({ ...f, tools }))
+              }
+              suggestionPool={toolSuggestionPool}
+              placeholder="e.g. Jira, Miro, Azure DevOps"
             />
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
               <button type="submit" disabled={saving} style={{ ...btn, fontSize: 13 }}>
@@ -2269,7 +3667,10 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
             <SkillTagInput
               label={
                 <>
-                  Skills <span style={{ fontWeight: 400 }}>(optional)</span>
+                  Skills{" "}
+                  <span style={{ fontWeight: 400 }}>
+                    (optional — specific capabilities)
+                  </span>
                 </>
               }
               skills={projForm.skills}
@@ -2277,7 +3678,35 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
                 setProjForm((f) => ({ ...f, skills }))
               }
               suggestionPool={skillSuggestionPool}
-              placeholder="Type a skill and press Enter"
+              placeholder="e.g. Workshop facilitation"
+            />
+            <SkillTagInput
+              label={
+                <>
+                  Methods / practices{" "}
+                  <span style={{ fontWeight: 400 }}>(optional)</span>
+                </>
+              }
+              skills={projForm.methods}
+              onSkillsChange={(methods) =>
+                setProjForm((f) => ({ ...f, methods }))
+              }
+              suggestionPool={methodSuggestionPool}
+              placeholder="e.g. Kanban"
+            />
+            <SkillTagInput
+              label={
+                <>
+                  Tools / platforms{" "}
+                  <span style={{ fontWeight: 400 }}>(optional)</span>
+                </>
+              }
+              skills={projForm.tools}
+              onSkillsChange={(tools) =>
+                setProjForm((f) => ({ ...f, tools }))
+              }
+              suggestionPool={toolSuggestionPool}
+              placeholder="e.g. Jira"
             />
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
               <button type="submit" disabled={saving} style={{ ...btn, fontSize: 13 }}>
@@ -2295,6 +3724,23 @@ export function MyExperienceSection({ activeOrgId, isActive }: Props) {
           </form>
         </div>
       ) : null}
+
+      <WorkExperienceRefinerModal
+        open={refinerExperience !== null}
+        onClose={() => setRefinerExperience(null)}
+        experience={refinerExperience}
+        relatedProjects={
+          refinerExperience
+            ? (projectsByExperienceId[refinerExperience.id] ??
+                EMPTY_RELATED_PROJECTS)
+            : EMPTY_RELATED_PROJECTS
+        }
+        primaryAccountType={primaryAccountType}
+        onApplySuggestions={(s) => {
+          if (!refinerExperience) return;
+          applyRefinementSuggestionToEditForm(refinerExperience, s);
+        }}
+      />
     </div>
   );
 }

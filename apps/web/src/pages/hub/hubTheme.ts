@@ -1,4 +1,8 @@
-/** Shared design tokens — Capability Hub dark shell */
+/** Shared design tokens — Capability Studio app shell (Feijoa8 / Enlighten-aligned dark theme) */
+
+/** Brand accent aligned with public marketing (lime); use sparingly for product chrome. */
+export const brandLime = "#c4f542";
+export const brandLimeMuted = "rgba(196, 245, 66, 0.16)";
 
 export const bg = "#0c0f14";
 export const surface = "#151a22";

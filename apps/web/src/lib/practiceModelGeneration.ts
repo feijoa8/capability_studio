@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { toHierarchyCompanyProfilePayload } from "./organisationProfileMaps";
 import type { OrganisationProfileRow } from "../pages/hub/types";
 
 export type GeneratedPracticeDraft = {
@@ -9,37 +10,6 @@ export type GeneratedPracticeDraft = {
 export type GeneratePracticeModelResult = {
   practices: GeneratedPracticeDraft[];
 };
-
-type CompanyProfilePayload = {
-  organisation_name: string | null;
-  sector: string | null;
-  industry: string | null;
-  summary: string | null;
-  business_purpose: string | null;
-  strategic_priorities: string | null;
-  delivery_context: string | null;
-  capability_emphasis: string | null;
-  role_interpretation_guidance: string | null;
-  terminology_guidance: string | null;
-};
-
-function mapCompanyProfile(
-  row: OrganisationProfileRow | null,
-): CompanyProfilePayload | null {
-  if (!row) return null;
-  return {
-    organisation_name: row.organisation_name ?? null,
-    sector: row.sector ?? null,
-    industry: row.industry ?? null,
-    summary: row.summary ?? null,
-    business_purpose: row.business_purpose ?? null,
-    strategic_priorities: row.strategic_priorities ?? null,
-    delivery_context: row.delivery_context ?? null,
-    capability_emphasis: row.capability_emphasis ?? null,
-    role_interpretation_guidance: row.role_interpretation_guidance ?? null,
-    terminology_guidance: row.terminology_guidance ?? null,
-  };
-}
 
 async function invokeErrorMessage(
   error: { message?: string; context?: unknown },
@@ -99,6 +69,8 @@ export async function generatePracticeModelWithAi(input: {
   companyProfile: OrganisationProfileRow | null;
   domain: string | null;
   focus: string | null;
+  /** Organisation practice names to treat as stable anchors (no duplicate or near-duplicate proposals). */
+  existingPracticeNames?: string[];
 }): Promise<GeneratePracticeModelResult> {
   const {
     data: { session },
@@ -118,9 +90,10 @@ export async function generatePracticeModelWithAi(input: {
         Authorization: `Bearer ${accessToken}`,
       },
       body: {
-        companyProfile: mapCompanyProfile(input.companyProfile),
+        companyProfile: toHierarchyCompanyProfilePayload(input.companyProfile),
         domain: input.domain?.trim() || null,
         focus: input.focus?.trim() || null,
+        existingPracticeNames: input.existingPracticeNames ?? [],
       },
     },
   );

@@ -1,0 +1,2 @@
+# SPA fallback (Netlify-style). Ensures /auth/reset-password serves the app.
+/*    /index.html   200

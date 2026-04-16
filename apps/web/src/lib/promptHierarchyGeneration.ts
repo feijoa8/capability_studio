@@ -21,6 +21,16 @@ export type PromptHierarchyResult = {
   practices: PromptHierarchyPractice[];
 };
 
+/** Optional taxonomy anchors for generate-hierarchy-from-prompt (governance). */
+export type PromptHierarchyTaxonomyAnchors = {
+  protectedSubjectNames?: string[];
+  settledSubjectNames?: string[];
+  protectedCapabilityAreaNames?: string[];
+  settledCapabilityAreaNames?: string[];
+  protectedPracticeNames?: string[];
+  settledPracticeNames?: string[];
+};
+
 async function invokeErrorMessage(
   error: { message?: string; context?: unknown },
   data: unknown,
@@ -106,6 +116,7 @@ function parseResult(data: unknown): PromptHierarchyResult {
 
 export async function generateHierarchyFromPrompt(input: {
   prompt: string;
+  taxonomyAnchors?: PromptHierarchyTaxonomyAnchors;
 }): Promise<PromptHierarchyResult> {
   const {
     data: { session },
@@ -124,7 +135,15 @@ export async function generateHierarchyFromPrompt(input: {
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
-      body: { prompt: input.prompt.trim() },
+      body: {
+        prompt: input.prompt.trim(),
+        ...(input.taxonomyAnchors &&
+        Object.values(input.taxonomyAnchors).some(
+          (v) => Array.isArray(v) && v.length > 0,
+        )
+          ? { taxonomyAnchors: input.taxonomyAnchors }
+          : {}),
+      },
     },
   );
 

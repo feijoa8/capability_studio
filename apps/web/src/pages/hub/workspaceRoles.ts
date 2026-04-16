@@ -1,6 +1,8 @@
 /**
  * Workspace role helpers for UI gating (frontend only; RLS remains authoritative).
  *
+ * See `lib/roleModel.ts` for platform vs workspace separation and consultant rules.
+ *
  * Canonical elevated admin roles — prefer these in new code:
  * - company_owner
  * - company_admin
@@ -10,6 +12,12 @@
  * - learning_lead (elevated; management nav + admin surfaces)
  * - admin (alias on some surfaces only; see helpers below)
  */
+
+import type { WorkspaceMembership } from "./types";
+import {
+  emailEligibleForFeijoa8PlatformOperator,
+  hasPlatformReferenceLibraryOperatorCapability,
+} from "../../lib/roleModel";
 
 export const WORKSPACE_ADMIN_ROLES = [
   "company_owner",
@@ -54,4 +62,27 @@ export function canAccessWorkspaceAdminSurfaces(
   if (!r) return false;
   if (isWorkspaceAdminRole(role)) return true;
   return r === "learning_lead" || r === "admin";
+}
+
+/** Eligibility only — never use alone for authority; pair with WM.system_admin (see roleModel). */
+export function isFeijoa8SystemOperatorEmail(
+  email: string | null | undefined,
+): boolean {
+  return emailEligibleForFeijoa8PlatformOperator(email);
+}
+
+/**
+ * @deprecated Prefer `hasPlatformReferenceLibraryOperatorCapability(memberships, email)` — the
+ * active org’s row alone is not sufficient when the operator flag sits on another membership.
+ *
+ * Shared reference library admin surfaces (system reference library, starter pack editor).
+ * Must match DB `is_reference_library_admin()`: active membership with
+ * `system_role = 'system_admin'` and an @feijoa8.com sign-in email.
+ */
+export function isReferenceLibrarySystemAdmin(
+  membership: { system_role?: string | null } | null | undefined,
+  userEmail: string | null | undefined,
+): boolean {
+  const m = membership as WorkspaceMembership | null | undefined;
+  return hasPlatformReferenceLibraryOperatorCapability(m ? [m] : [], userEmail);
 }

@@ -1,9 +1,17 @@
 /**
- * Normalize free-text skills for storage and display: trim, collapse spaces,
- * title-case words (including hyphenated segments). No master dictionary.
+ * Normalize free-text evidence tags (skills, methods, tools) for storage and display:
+ * trim, collapse spaces, title-case words (including hyphenated segments). No master dictionary.
+ * Industry/domain uses plain trim on the row field, not this helper.
  */
-export function normalizeSkillLabel(raw: string): string {
-  const collapsed = raw.trim().replace(/\s+/g, " ");
+export function normalizeSkillLabel(raw: unknown): string {
+  if (raw == null) return "";
+  const s =
+    typeof raw === "string"
+      ? raw
+      : typeof raw === "number" && Number.isFinite(raw)
+        ? String(raw)
+        : "";
+  const collapsed = s.trim().replace(/\s+/g, " ");
   if (!collapsed) return "";
   return collapsed
     .split(" ")
@@ -23,7 +31,7 @@ export function normalizeSkillLabel(raw: string): string {
 }
 
 /** Deduplicate by case-insensitive key; each value is normalized. */
-export function dedupeSkillsNormalized(raw: string[]): string[] {
+export function dedupeSkillsNormalized(raw: readonly unknown[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const s of raw) {

@@ -34,7 +34,53 @@ export type JobRequirementRow = {
   is_required: boolean;
   relevance: JobProfileRelevance;
   competencies: { id: string; name: string } | null;
+  /** From competencies.competency_type when join includes it */
+  competency_type?: string | null;
+  /** From competencies.subject_id / competency_subjects when join includes them */
+  subject_id?: string | null;
+  subject_name?: string | null;
+  subject_type?: string | null;
+  practice_name?: string | null;
 };
+
+/** Extract subject/practice metadata from embedded `competencies` (optional; safe on minimal joins). */
+export function extractCompetencySubjectMeta(comp: unknown): {
+  competency_type?: string | null;
+  subject_id?: string | null;
+  subject_name?: string | null;
+  subject_type?: string | null;
+  practice_name?: string | null;
+} {
+  if (!comp || typeof comp !== "object") return {};
+  const c = comp as Record<string, unknown>;
+  const competency_type =
+    typeof c.competency_type === "string" ? c.competency_type : null;
+  const subject_id =
+    typeof c.subject_id === "string" ? c.subject_id : null;
+  const subj = c.competency_subjects;
+  const sub = Array.isArray(subj) ? subj[0] : subj;
+  let subject_name: string | null = null;
+  let subject_type: string | null = null;
+  let practice_name: string | null = null;
+  if (sub && typeof sub === "object") {
+    const s = sub as Record<string, unknown>;
+    subject_name = typeof s.name === "string" ? s.name : null;
+    subject_type = typeof s.type === "string" ? s.type : null;
+    const pr = s.competency_practices;
+    const p = Array.isArray(pr) ? pr[0] : pr;
+    if (p && typeof p === "object" && "name" in p) {
+      const n = String((p as { name?: string }).name ?? "").trim();
+      practice_name = n || null;
+    }
+  }
+  return {
+    competency_type,
+    subject_id,
+    subject_name,
+    subject_type,
+    practice_name,
+  };
+}
 
 export type LevelDef = {
   competency_id: string;
@@ -195,12 +241,14 @@ export function normalizeJobRequirementRows(data: unknown): JobRequirementRow[] 
     };
     const c = row.competencies;
     const comp = Array.isArray(c) ? (c[0] ?? null) : (c ?? null);
+    const meta = extractCompetencySubjectMeta(comp);
     return {
       competency_id: row.competency_id,
       required_level: row.required_level,
       is_required: Boolean(row.is_required),
       relevance: parseJobRelevance(row.relevance),
       competencies: comp,
+      ...meta,
     };
   });
 }

@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { toHierarchyCompanyProfilePayload } from "./organisationProfileMaps";
 import type { OrganisationProfileRow } from "../pages/hub/types";
 
 export type GeneratedSubjectDraft = {
@@ -11,37 +12,6 @@ export type GeneratedCompetencyDraft = {
   name: string;
   description: string;
 };
-
-type CompanyProfilePayload = {
-  organisation_name: string | null;
-  sector: string | null;
-  industry: string | null;
-  summary: string | null;
-  business_purpose: string | null;
-  strategic_priorities: string | null;
-  delivery_context: string | null;
-  capability_emphasis: string | null;
-  role_interpretation_guidance: string | null;
-  terminology_guidance: string | null;
-};
-
-function mapCompanyProfile(
-  row: OrganisationProfileRow | null
-): CompanyProfilePayload | null {
-  if (!row) return null;
-  return {
-    organisation_name: row.organisation_name ?? null,
-    sector: row.sector ?? null,
-    industry: row.industry ?? null,
-    summary: row.summary ?? null,
-    business_purpose: row.business_purpose ?? null,
-    strategic_priorities: row.strategic_priorities ?? null,
-    delivery_context: row.delivery_context ?? null,
-    capability_emphasis: row.capability_emphasis ?? null,
-    role_interpretation_guidance: row.role_interpretation_guidance ?? null,
-    terminology_guidance: row.terminology_guidance ?? null,
-  };
-}
 
 async function invokeErrorMessage(
   error: { message?: string; context?: unknown },
@@ -73,12 +43,28 @@ async function invokeErrorMessage(
   return msg;
 }
 
-export async function generateSubjectsWithAi(input: {
+export type GenerateSubjectsPracticeInput = {
   companyProfile: OrganisationProfileRow | null;
   practiceName: string;
   practiceDescription: string | null;
   existingSubjectNames: string[];
-}): Promise<{ subjects: GeneratedSubjectDraft[] }> {
+  /** Stable taxonomy anchors — passed to the model as non-duplicable names. */
+  settledSubjectNames?: string[];
+  protectedSubjectNames?: string[];
+};
+
+export type GenerateSubjectsOrganisationInput = {
+  companyProfile: OrganisationProfileRow | null;
+  /** When true, the edge function generates organisation-wide subjects (no practice scope). */
+  organisationContext: true;
+  existingSubjectNames: string[];
+  settledSubjectNames?: string[];
+  protectedSubjectNames?: string[];
+};
+
+export async function generateSubjectsWithAi(
+  input: GenerateSubjectsPracticeInput | GenerateSubjectsOrganisationInput
+): Promise<{ subjects: GeneratedSubjectDraft[] }> {
   const {
     data: { session },
   } = await supabase.auth.getSession();
@@ -88,14 +74,34 @@ export async function generateSubjectsWithAi(input: {
       "You must be signed in to generate subjects. Your session may have expired."
     );
   }
+  const settledSubjectNames = input.settledSubjectNames?.filter(Boolean) ?? [];
+  const protectedSubjectNames =
+    input.protectedSubjectNames?.filter(Boolean) ?? [];
+
+  const body =
+    "organisationContext" in input && input.organisationContext
+      ? {
+          companyProfile: toHierarchyCompanyProfilePayload(input.companyProfile),
+          organisationContext: true as const,
+          existingSubjectNames: input.existingSubjectNames,
+          settledSubjectNames,
+          protectedSubjectNames,
+        }
+      : {
+          companyProfile: toHierarchyCompanyProfilePayload(
+            (input as GenerateSubjectsPracticeInput).companyProfile
+          ),
+          practiceName: (input as GenerateSubjectsPracticeInput).practiceName.trim(),
+          practiceDescription:
+            (input as GenerateSubjectsPracticeInput).practiceDescription?.trim() ||
+            null,
+          existingSubjectNames: input.existingSubjectNames,
+          settledSubjectNames,
+          protectedSubjectNames,
+        };
   const { data, error } = await supabase.functions.invoke("generate-subjects", {
     headers: { Authorization: `Bearer ${accessToken}` },
-    body: {
-      companyProfile: mapCompanyProfile(input.companyProfile),
-      practiceName: input.practiceName.trim(),
-      practiceDescription: input.practiceDescription?.trim() || null,
-      existingSubjectNames: input.existingSubjectNames,
-    },
+    body,
   });
   if (error) {
     throw new Error(await invokeErrorMessage(error, data));
@@ -149,7 +155,7 @@ export async function generateCompetenciesWithAi(input: {
     {
       headers: { Authorization: `Bearer ${accessToken}` },
       body: {
-        companyProfile: mapCompanyProfile(input.companyProfile),
+        companyProfile: toHierarchyCompanyProfilePayload(input.companyProfile),
         practiceName: input.practiceName?.trim() || null,
         subjectName: input.subjectName.trim(),
         subjectDescription: input.subjectDescription?.trim() || null,
