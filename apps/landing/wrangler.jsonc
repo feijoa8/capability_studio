@@ -6,5 +6,32 @@
   // OpenNext writes `_worker.js`, server bundles, and `assets/` (with `_next/` inside).
   // Pages must serve `/_next/static/...` from the output root; `prepare-pages-static.mjs`
   // copies `assets/_next` (and optional `brand`, `_headers`) up into `.open-next/`.
-  "pages_build_output_dir": ".open-next"
+  "pages_build_output_dir": ".open-next",
+
+  // --- Public vars only (no Supabase service role, API secrets, or private keys) ---
+  //
+  // Replace every placeholder below with real values for each Cloudflare environment.
+  // Typical split:
+  //   - Production: live Supabase project, production app URL, public landing hostname.
+  //   - Preview: optional separate Supabase project or same project with care; preview
+  //     app URL / `*.pages.dev` host for `NEXT_PUBLIC_SITE_URL` so auth redirects and
+  //     metadata match the branch deployment.
+  //
+  // `NEXT_PUBLIC_SUPABASE_ANON_KEY` is the **publishable** Supabase anon key (RLS-bound),
+  // not the service-role key. Never commit the service role or other server-only secrets.
+  //
+  // Next.js inlines `NEXT_PUBLIC_*` at **build** time. For Git-connected Pages, also set
+  // these names under Project → Settings → Environment variables (Production / Preview)
+  // for the **build** step so `npm run pages:build` sees them, unless your CI exports
+  // the same values into the shell before build.
+  //
+  // For preview vs production **runtime** bindings without duplicating values in git, add
+  // `env.preview` / `env.production` `vars` overrides per:
+  // https://developers.cloudflare.com/pages/functions/wrangler-configuration/
+  "vars": {
+    "NEXT_PUBLIC_SUPABASE_URL": "https://YOUR_PROJECT_REF.supabase.co",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "REPLACE_WITH_SUPABASE_ANON_KEY",
+    "NEXT_PUBLIC_APP_URL": "https://YOUR_PRODUCTION_APP_ORIGIN.example",
+    "NEXT_PUBLIC_SITE_URL": "https://YOUR_LANDING_PAGES_HOST.example"
+  }
 }
