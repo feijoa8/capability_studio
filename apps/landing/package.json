@@ -4,8 +4,8 @@
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
-    "pages:build": "opennextjs-cloudflare build",
-    "pages:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "pages:build": "opennextjs-cloudflare build && cp .open-next/worker.js .open-next/_worker.js",
+    "pages:preview": "opennextjs-cloudflare build && wrangler pages dev .open-next",
     "start": "next start -p 3001",
     "lint": "next lint"
   },
