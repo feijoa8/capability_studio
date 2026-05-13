@@ -10,6 +10,7 @@ import {
   getOpenAppHref,
   getSignupHref,
 } from "@/lib/appLinks";
+import { isEarlyAccessPhase } from "@/lib/earlyAccess";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 type Props = {
@@ -21,6 +22,8 @@ const navLinkStyle = {
   fontSize: "0.9rem",
   fontWeight: 500,
 } as const;
+
+const earlyAccess = isEarlyAccessPhase();
 
 export function SiteHeader({ initialUser }: Props) {
   const router = useRouter();
@@ -67,17 +70,18 @@ export function SiteHeader({ initialUser }: Props) {
         borderBottom: "1px solid var(--border)",
       }}
     >
-      <div
-        className="container site-header-inner"
-        style={{
-          display: "grid",
-          gridTemplateColumns: "auto 1fr auto",
-          alignItems: "center",
-          gap: "1.25rem",
-          minHeight: 64,
-          paddingBlock: "0.65rem",
-        }}
-      >
+      <div className="container">
+        <div
+          className="site-header-inner"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "auto 1fr auto",
+            alignItems: "center",
+            gap: "1.25rem",
+            minHeight: 64,
+            paddingBlock: "0.65rem",
+          }}
+        >
         <Link
           href="/#hero"
           className="site-brand"
@@ -189,6 +193,15 @@ export function SiteHeader({ initialUser }: Props) {
                 Sign out
               </button>
             </>
+          ) : earlyAccess ? (
+            <>
+              <a href={loginHref} className="btn btn-primary btn-sm">
+                Log in
+              </a>
+              <a href={forgotHref} className="btn btn-ghost btn-sm">
+                Forgot password
+              </a>
+            </>
           ) : (
             <>
               <a href={loginHref} className="btn btn-ghost btn-sm">
@@ -203,6 +216,83 @@ export function SiteHeader({ initialUser }: Props) {
             </>
           )}
         </div>
+        </div>
+        {earlyAccess && !user ? (
+          <div
+            role="region"
+            aria-label="Controlled early access"
+            style={{
+              marginTop: "0.15rem",
+              marginBottom: "0.65rem",
+              padding: "0.85rem 1rem",
+              borderRadius: "var(--radius)",
+              border: "1px solid var(--border)",
+              background: "var(--bg-elevated)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                flexWrap: "wrap",
+                marginBottom: "0.5rem",
+              }}
+            >
+              <h2
+                style={{
+                  fontSize: "0.95rem",
+                  fontWeight: 650,
+                  margin: 0,
+                  color: "var(--text)",
+                }}
+              >
+                Controlled Early Access
+              </h2>
+              <span
+                style={{
+                  fontSize: "0.65rem",
+                  fontWeight: 600,
+                  letterSpacing: "0.07em",
+                  textTransform: "uppercase",
+                  color: "var(--accent)",
+                  border: "1px solid rgba(196, 245, 66, 0.35)",
+                  padding: "2px 7px",
+                  borderRadius: 6,
+                }}
+              >
+                Early Access
+              </span>
+            </div>
+            <p
+              style={{
+                margin: 0,
+                fontSize: "0.875rem",
+                color: "var(--muted)",
+                lineHeight: 1.55,
+                maxWidth: "62ch",
+              }}
+            >
+              Capability Studio is currently available to a limited group of invited users while
+              we continue testing, refinement, and platform hardening.
+            </p>
+            <p
+              style={{
+                margin: "0.65rem 0 0",
+                fontSize: "0.875rem",
+                color: "var(--muted)",
+                lineHeight: 1.55,
+                maxWidth: "62ch",
+              }}
+            >
+              If you would like access or are interested in participating in early testing, please
+              contact:{" "}
+              <a href="mailto:info@feijoa8.com" style={{ fontWeight: 600 }}>
+                info@feijoa8.com
+              </a>
+            </p>
+          </div>
+        ) : null}
       </div>
     </header>
   );

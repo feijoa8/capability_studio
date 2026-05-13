@@ -14,7 +14,7 @@ const nextConfig: NextConfig = {
       { source: "/app", destination: appUrl, permanent: false },
       {
         source: "/auth/signup",
-        destination: `${appUrl.replace(/\/$/, "")}/`,
+        destination: `${appUrl.replace(/\/$/, "")}/?mode=signin`,
         permanent: false,
       },
       {

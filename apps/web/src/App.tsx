@@ -29,6 +29,10 @@ import {
   validateNewPassword,
 } from "./pages/auth/PasswordRecoveryViews";
 import { mutedColor, text } from "./pages/hub/hubTheme";
+import { isEarlyAccessAuth } from "./lib/earlyAccess";
+
+/** Production defaults to gated self-registration; see `lib/earlyAccess.ts`. */
+const EARLY_ACCESS_AUTH = isEarlyAccessAuth();
 
 function normalizeRecoveryUrlPath(): void {
   if (typeof window === "undefined") return;
@@ -99,7 +103,9 @@ export default function App() {
         setPasswordRecoveredBanner(true);
       }
       if (qMode === "signup" || qMode === "signin") {
-        setMode(qMode);
+        const nextMode =
+          EARLY_ACCESS_AUTH && qMode === "signup" ? "signin" : qMode;
+        setMode(nextMode);
         setSignInPane("credentials");
       }
       if (qMode === "forgot") {
@@ -491,46 +497,64 @@ export default function App() {
           boxSizing: "border-box",
         }}
       >
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          <button
-            type="button"
-            onClick={() => {
-              setMode("signin");
-              setAuthError("");
-              setAuthInfo("");
-            }}
+        {EARLY_ACCESS_AUTH ? (
+          <p
             style={{
-              fontWeight: mode === "signin" ? 600 : 400,
-              padding: "6px 12px",
-              cursor: "pointer",
-              background: mode === "signin" ? "#1a2029" : "transparent",
-              border: "1px solid #2a3240",
-              borderRadius: 8,
-              color: text,
+              fontSize: 13,
+              color: mutedColor,
+              lineHeight: 1.55,
+              margin: "0 0 16px",
             }}
           >
-            Sign in
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setMode("signup");
-              setAuthError("");
-              setAuthInfo("");
-            }}
-            style={{
-              fontWeight: mode === "signup" ? 600 : 400,
-              padding: "6px 12px",
-              cursor: "pointer",
-              background: mode === "signup" ? "#1a2029" : "transparent",
-              border: "1px solid #2a3240",
-              borderRadius: 8,
-              color: text,
-            }}
-          >
-            Create account
-          </button>
-        </div>
+            Capability Studio is in controlled early access for invited users. For access or
+            early testing, contact{" "}
+            <a href="mailto:info@feijoa8.com" style={{ color: "#6eb0f0", fontWeight: 500 }}>
+              info@feijoa8.com
+            </a>
+            .
+          </p>
+        ) : (
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            <button
+              type="button"
+              onClick={() => {
+                setMode("signin");
+                setAuthError("");
+                setAuthInfo("");
+              }}
+              style={{
+                fontWeight: mode === "signin" ? 600 : 400,
+                padding: "6px 12px",
+                cursor: "pointer",
+                background: mode === "signin" ? "#1a2029" : "transparent",
+                border: "1px solid #2a3240",
+                borderRadius: 8,
+                color: text,
+              }}
+            >
+              Sign in
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode("signup");
+                setAuthError("");
+                setAuthInfo("");
+              }}
+              style={{
+                fontWeight: mode === "signup" ? 600 : 400,
+                padding: "6px 12px",
+                cursor: "pointer",
+                background: mode === "signup" ? "#1a2029" : "transparent",
+                border: "1px solid #2a3240",
+                borderRadius: 8,
+                color: text,
+              }}
+            >
+              Create account
+            </button>
+          </div>
+        )}
 
         {passwordRecoveredBanner ? (
           <p
@@ -545,7 +569,7 @@ export default function App() {
           </p>
         ) : null}
 
-        {mode === "signin" ? (
+        {EARLY_ACCESS_AUTH || mode === "signin" ? (
           <>
             <h1 style={{ fontSize: 22, fontWeight: 600, marginBottom: 20, color: text }}>
               Sign in

@@ -14,6 +14,8 @@ interface ImportMetaEnv {
    * In dev, defaults to http://localhost:3001 when unset.
    */
   readonly VITE_LANDING_URL?: string;
+  /** When unset, early access follows `import.meta.env.PROD`. */
+  readonly VITE_PUBLIC_EARLY_ACCESS?: string;
 }
 
 interface ImportMeta {
