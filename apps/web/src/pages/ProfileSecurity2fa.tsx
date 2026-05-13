@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { getEmail2faGateStatus } from "../lib/email2faGateStatus";
 import { invokeEmailOtp2fa } from "../lib/emailOtp2faClient";
+import { CS_OTP_NUMERIC_LENGTH } from "../lib/otpCodeLength";
 import {
   btnPrimary,
   errorColor,
@@ -59,7 +60,7 @@ export function ProfileSecurity2fa({ userId, onChanged }: Props) {
       return;
     }
     setShowEnroll(true);
-    setMsg("Enter the code from your email.");
+    setMsg("Enter the 8-digit code from your email.");
   }
 
   async function completeEnroll() {
@@ -67,7 +68,7 @@ export function ProfileSecurity2fa({ userId, onChanged }: Props) {
     setBusy(true);
     const out = await invokeEmailOtp2fa(supabase, {
       action: "complete_enrollment",
-      code: code.replace(/\D/g, ""),
+      code: code.replace(/\D/g, "").slice(0, CS_OTP_NUMERIC_LENGTH),
     });
     setBusy(false);
     if (out.error) {
@@ -174,10 +175,13 @@ export function ProfileSecurity2fa({ userId, onChanged }: Props) {
         <div style={{ display: "grid", gap: 10, maxWidth: 280 }}>
           <input
             value={code}
-            onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-            placeholder="6-digit code"
+            onChange={(e) =>
+              setCode(e.target.value.replace(/\D/g, "").slice(0, CS_OTP_NUMERIC_LENGTH))
+            }
+            placeholder="8-digit code"
             inputMode="numeric"
             autoComplete="one-time-code"
+            maxLength={CS_OTP_NUMERIC_LENGTH}
             style={{
               padding: "10px 12px",
               fontSize: 15,
@@ -189,7 +193,7 @@ export function ProfileSecurity2fa({ userId, onChanged }: Props) {
           />
           <button
             type="button"
-            disabled={busy || code.length !== 6}
+            disabled={busy || code.length !== CS_OTP_NUMERIC_LENGTH}
             onClick={() => void completeEnroll()}
             style={{ ...btnPrimary, fontSize: 13 }}
           >

@@ -3,6 +3,7 @@ import type { CSSProperties, FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabase";
 import { getEmail2faGateStatus } from "../../lib/email2faGateStatus";
+import { CS_OTP_NUMERIC_LENGTH } from "../../lib/otpCodeLength";
 import { invokeEmailOtp2fa } from "../../lib/emailOtp2faClient";
 import { AuthRecoveryChrome } from "./PasswordRecoveryViews";
 import {
@@ -132,7 +133,7 @@ export function TwoFactorGate({ session, children }: Props) {
     setBusy(true);
     const out = await invokeEmailOtp2fa(supabase, {
       action: "complete_enrollment",
-      code: enrollCode.replace(/\D/g, ""),
+      code: enrollCode.replace(/\D/g, "").slice(0, CS_OTP_NUMERIC_LENGTH),
     });
     setBusy(false);
     if (out.error) {
@@ -152,7 +153,7 @@ export function TwoFactorGate({ session, children }: Props) {
     setBusy(true);
     const out = await invokeEmailOtp2fa(supabase, {
       action: "verify_login",
-      code: loginCode.replace(/\D/g, ""),
+      code: loginCode.replace(/\D/g, "").slice(0, CS_OTP_NUMERIC_LENGTH),
     });
     setBusy(false);
     if (out.error) {
@@ -263,7 +264,7 @@ export function TwoFactorGate({ session, children }: Props) {
           </h1>
           <p style={{ color: mutedColor, fontSize: 14, lineHeight: 1.55, margin: "0 0 18px" }}>
             {mandatory
-              ? "Your role requires two-factor sign-in. Confirm this email with the one-time code we send you."
+              ? "Your role requires two-factor sign-in. Confirm this email with the 8-digit one-time code we send you."
               : "Add email one-time codes for stronger account protection."}
           </p>
           {localInfo ? (
@@ -274,21 +275,25 @@ export function TwoFactorGate({ session, children }: Props) {
           ) : null}
           <form onSubmit={handleCompleteEnroll} style={{ display: "grid", gap: 12 }}>
             <label style={{ display: "grid", gap: 6, fontSize: 13, color: mutedColor }}>
-              6-digit code
+              8-digit code
               <input
                 value={enrollCode}
-                onChange={(e) => setEnrollCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                onChange={(e) =>
+                  setEnrollCode(
+                    e.target.value.replace(/\D/g, "").slice(0, CS_OTP_NUMERIC_LENGTH),
+                  )
+                }
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                placeholder="••••••"
+                placeholder="••••••••"
                 required
-                maxLength={6}
+                maxLength={CS_OTP_NUMERIC_LENGTH}
                 style={inputStyle}
               />
             </label>
             <button
               type="submit"
-              disabled={busy || enrollCode.length !== 6}
+              disabled={busy || enrollCode.length !== CS_OTP_NUMERIC_LENGTH}
               style={{
                 padding: "10px 14px",
                 fontSize: 15,
@@ -351,7 +356,7 @@ export function TwoFactorGate({ session, children }: Props) {
             Verify it&apos;s you
           </h1>
           <p style={{ color: mutedColor, fontSize: 14, lineHeight: 1.55, margin: "0 0 18px" }}>
-            Enter the code from your email to finish signing in.
+            Enter the 8-digit code from your email to finish signing in.
           </p>
           {localInfo ? (
             <p style={{ color: "#8fd9a8", fontSize: 14, margin: "0 0 14px" }}>{localInfo}</p>
@@ -361,21 +366,25 @@ export function TwoFactorGate({ session, children }: Props) {
           ) : null}
           <form onSubmit={handleVerifyLogin} style={{ display: "grid", gap: 12 }}>
             <label style={{ display: "grid", gap: 6, fontSize: 13, color: mutedColor }}>
-              6-digit code
+              8-digit code
               <input
                 value={loginCode}
-                onChange={(e) => setLoginCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                onChange={(e) =>
+                  setLoginCode(
+                    e.target.value.replace(/\D/g, "").slice(0, CS_OTP_NUMERIC_LENGTH),
+                  )
+                }
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                placeholder="••••••"
+                placeholder="••••••••"
                 required
-                maxLength={6}
+                maxLength={CS_OTP_NUMERIC_LENGTH}
                 style={inputStyle}
               />
             </label>
             <button
               type="submit"
-              disabled={busy || loginCode.length !== 6}
+              disabled={busy || loginCode.length !== CS_OTP_NUMERIC_LENGTH}
               style={{
                 padding: "10px 14px",
                 fontSize: 15,
