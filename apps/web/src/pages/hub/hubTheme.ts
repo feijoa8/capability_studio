@@ -58,6 +58,9 @@ export const inputField = {
   outline: "none",
 } as const;
 
+/** Input / read-only field surface (shared by hiring, talent search, admin forms). */
+export const fieldBg = bg;
+
 export const section = { marginTop: 28 } as const;
 
 export const muted = { color: mutedColor, fontSize: 14 } as const;

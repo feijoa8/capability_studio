@@ -35,6 +35,11 @@ export type WorkspaceMembership = {
   is_primary?: boolean | null;
   membership_status: string;
   organisations: { id: string; name: string } | null;
+  /**
+   * When true, manager / learning_lead may use Talent Management surfaces.
+   * Optional until selected from API; see `canAccessTalentManagement`.
+   */
+  has_talent_management_access?: boolean | null;
 };
 
 export type UserExperienceRow = {
@@ -367,6 +372,8 @@ export type AppSection =
   | "my_career"
   | "my_development"
   | "application_evaluations"
+  | "hiring"
+  | "talent_search"
   | "my_team"
   | "team_insights"
   | "industry_insights"
@@ -511,7 +518,14 @@ export type DevelopmentGoalNoteRow = {
   created_at: string;
 };
 
-export type DevelopmentFocusItemSource = "catalogue" | "ai" | "manual";
+export type DevelopmentFocusItemSource =
+  | "catalogue"
+  | "ai"
+  | "manual"
+  | "gap"
+  | "career"
+  | "role"
+  | "application";
 
 export type DevelopmentFocusItemStatus =
   | "backlog"
@@ -531,6 +545,11 @@ export type DevelopmentFocusItemRow = {
   status: DevelopmentFocusItemStatus;
   due_date?: string | null;
   archived?: boolean;
+  /** Optional link to a personal competency target row (gap / focus workflows). */
+  personal_competency_target_id?: string | null;
+  /** Legacy / alternate payload fields referenced by some backlog UIs. */
+  item?: unknown;
+  reinforced?: unknown;
   created_at: string;
   updated_at: string;
 };
@@ -609,6 +628,51 @@ export type DevelopmentPlanObjectiveNoteRow = {
   user_id: string;
   note_type: DevelopmentPlanObjectiveNoteType;
   content: string;
+  created_at: string;
+  updated_at: string;
+};
+
+/** `user_personal_competency_targets` (client shape used by focus / planning UIs). */
+export type UserPersonalCompetencyTargetRow = {
+  id: string;
+  user_id: string;
+  competency_key: string;
+  status: string;
+  sort_order?: number | null;
+  label?: string | null;
+  summary?: string | null;
+  signal_count?: number | null;
+  sources?: string[] | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UserCreditWalletRow = {
+  user_id: string;
+  balance: number;
+  free_balance?: number;
+  purchased_balance?: number;
+  lifetime_purchased?: number;
+  lifetime_used?: number;
+};
+
+export type CreditTransactionRow = {
+  id: string;
+  amount: number;
+  type?: string | null;
+  feature_key?: string | null;
+  created_at: string;
+};
+
+export type UserPrivacyPreferencesRow = {
+  user_id: string;
+  share_experience_with_current_org: boolean;
+  share_experience_for_internal_opportunity_matching: boolean;
+  share_active_competency_focus_with_org: boolean;
+  share_active_development_focus_with_org: boolean;
+  keep_development_progress_updates_private: boolean;
+  allow_profile_for_upcoming_internal_roles: boolean;
+  allow_suggested_opportunities_from_profile: boolean;
   created_at: string;
   updated_at: string;
 };

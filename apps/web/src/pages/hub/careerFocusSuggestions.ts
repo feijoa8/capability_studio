@@ -17,7 +17,7 @@ export type DevelopmentFocusItem = {
 };
 
 /** Fixed catalogue shown when a keyword signal is present in next/future role. */
-const FOCUS_CATALOG: DevelopmentFocusItem[] = [
+export const FOCUS_CATALOG: DevelopmentFocusItem[] = [
   {
     id: "programme-delivery-leadership",
     title: "Programme delivery leadership",

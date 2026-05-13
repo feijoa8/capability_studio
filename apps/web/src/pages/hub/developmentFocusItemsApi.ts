@@ -161,3 +161,23 @@ export async function addUpdateForFocusItem(args: {
   return data as DevelopmentFocusUpdateRow;
 }
 
+export async function setDevelopmentFocusItemPersonalCompetency(args: {
+  id: string;
+  personal_competency_target_id: string | null;
+}) {
+  const { data: auth } = await supabase.auth.getUser();
+  const uid = auth?.user?.id;
+  if (!uid) throw new Error("Not signed in.");
+
+  const { error } = await supabase
+    .from("development_focus_items")
+    .update({
+      personal_competency_target_id: args.personal_competency_target_id,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", args.id)
+    .eq("user_id", uid);
+
+  if (error) throw new Error(error.message || "Could not update link.");
+}
+

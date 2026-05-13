@@ -17,6 +17,7 @@ import { MyExperienceSection } from "./MyExperienceSection";
 import { MyCareerSection } from "./MyCareerSection";
 import { MyDevelopmentSection } from "./MyDevelopmentSection";
 import { ApplicationEvaluationsSection } from "./ApplicationEvaluationsSection";
+import { HiringSection } from "./HiringSection";
 import { MyTeamSection } from "./MyTeamSection";
 import { TeamInsightsSection } from "./TeamInsightsSection";
 import { UsersSection } from "./UsersSection";
@@ -24,6 +25,7 @@ import { UserAdminSection } from "./UserAdminSection";
 import { TeamsSection } from "./TeamsSection";
 import { CompanyProfileSection } from "./CompanyProfileSection";
 import { IndustryInsightsSection } from "./IndustryInsightsSection";
+import { TalentSearchSection } from "./talentSearch/TalentSearchSection";
 import type {
   AppSection,
   ProfileRow,
@@ -41,6 +43,7 @@ import {
   hasPlatformReferenceLibraryOperatorCapability,
 } from "../lib/roleModel";
 import { pickEffectiveMembershipForOrganisation } from "./hub/effectiveMembership";
+import { canAccessTalentManagement } from "./hub/workspaceAccess";
 import { canAccessWorkspaceManagementNav } from "./hub/workspaceRoles";
 import {
   activeBanner,
@@ -62,6 +65,8 @@ const SECTION_LABELS: Record<AppSection, string> = {
   my_career: "My Career",
   my_development: "My Development",
   application_evaluations: "Application Evaluations",
+  hiring: "Hiring",
+  talent_search: "Talent Search",
   my_team: "My Team",
   team_insights: "Team Insights",
   industry_insights: "Industry Insights",
@@ -100,6 +105,11 @@ const PERSONAL_NAV: { id: AppSection; label: string }[] = [
 ];
 
 /** Future: append e.g. `{ id: "my_applications", label: "My Applications" }` to PERSONAL_NAV_CORE when implemented. */
+
+const TALENT_NAV: { id: AppSection; label: string }[] = [
+  { id: "hiring", label: "Hiring" },
+  { id: "talent_search", label: "Talent Search" },
+];
 
 const MANAGEMENT_NAV: { id: AppSection; label: string }[] = [
   { id: "job_profiles", label: "Job Profiles" },
@@ -429,6 +439,23 @@ export default function MyDashboard({ userEmail }: Props) {
     [activeMembership?.workspace_role]
   );
 
+  const canAccessTalentNav = useMemo(
+    () =>
+      canAccessTalentManagement(activeMembership, {
+        allMemberships: workspace.allMembershipRows,
+        userEmail,
+      }),
+    [activeMembership, workspace.allMembershipRows, userEmail],
+  );
+
+  useEffect(() => {
+    if (workspace.loading) return;
+    if (canAccessTalentNav) return;
+    if (activeSection === "hiring" || activeSection === "talent_search") {
+      setActiveSection("my_dashboard");
+    }
+  }, [workspace.loading, canAccessTalentNav, activeSection]);
+
   const canAccessSystemReferenceLibrary = useMemo(
     () =>
       hasPlatformReferenceLibraryOperatorCapability(
@@ -564,6 +591,23 @@ export default function MyDashboard({ userEmail }: Props) {
               </button>
             ))}
           </div>
+          {canAccessTalentNav ? (
+            <div className={styles.navGroup}>
+              <p className={styles.navGroupHeading}>TALENT MANAGEMENT</p>
+              {TALENT_NAV.map(({ id, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={`${styles.navButton} ${
+                    activeSection === id ? styles.navButtonActive : ""
+                  }`}
+                  onClick={() => setActiveSection(id)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          ) : null}
           {canAccessManagementNav ? (
             <>
               <div className={styles.navGroup}>
@@ -836,6 +880,18 @@ export default function MyDashboard({ userEmail }: Props) {
               <div hidden={activeSection !== "application_evaluations"}>
                 <ApplicationEvaluationsSection
                   isActive={activeSection === "application_evaluations"}
+                />
+              </div>
+              <div hidden={activeSection !== "hiring"}>
+                <HiringSection
+                  activeOrgId={workspace.activeOrgId}
+                  isActive={activeSection === "hiring"}
+                />
+              </div>
+              <div hidden={activeSection !== "talent_search"}>
+                <TalentSearchSection
+                  activeOrgId={workspace.activeOrgId}
+                  isActive={activeSection === "talent_search"}
                 />
               </div>
               <div hidden={activeSection !== "my_team"}>
