@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { RefinementSuggestionPayload } from "./types";
-import { bg, border, borderSubtle, mutedColor, text } from "../hubTheme";
+import { bg, borderSubtle, mutedColor, text } from "../hubTheme";
 
 type Props = {
   suggestion: RefinementSuggestionPayload | null;

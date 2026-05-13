@@ -1234,7 +1234,7 @@ export function MyDevelopmentSection({
         </button>
       </div>
 
-      {devTab === "plans" && currentUserId ? (
+      {devTab === "plans" && currentUserId && activeOrgId ? (
         <DevelopmentPlansPanel
           activeOrgId={activeOrgId}
           currentUserId={currentUserId}
