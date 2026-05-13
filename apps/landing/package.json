@@ -4,13 +4,16 @@
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
+    "pages:build": "opennextjs-cloudflare build",
+    "pages:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "start": "next start -p 3001",
     "lint": "next lint"
   },
   "dependencies": {
+    "@opennextjs/cloudflare": "1.15.1",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.103.0",
-    "next": "^15.1.0",
+    "next": "15.1.11",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
@@ -18,6 +21,7 @@
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "wrangler": "^4.59.2"
   }
 }
