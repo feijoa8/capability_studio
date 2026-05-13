@@ -3,5 +3,8 @@
   "name": "capability-studio-landing",
   "compatibility_date": "2026-05-13",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  // OpenNext writes `_worker.js`, server bundles, and `assets/` (with `_next/` inside).
+  // Pages must serve `/_next/static/...` from the output root; `prepare-pages-static.mjs`
+  // copies `assets/_next` (and optional `brand`, `_headers`) up into `.open-next/`.
   "pages_build_output_dir": ".open-next"
 }
