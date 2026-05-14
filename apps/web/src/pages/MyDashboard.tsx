@@ -9,6 +9,7 @@ import { JobProfilesSection } from "./JobProfilesSection";
 import { CompetenciesSection } from "./CompetenciesSection";
 import { StarterPacksSection } from "./StarterPacksSection";
 import { SystemReferenceLibrarySection } from "./SystemReferenceLibrarySection";
+import { SystemPlatformAdminSection } from "./SystemPlatformAdminSection";
 import { AppShellFooter } from "./AppShellFooter";
 import { HelpCenterAdminSection } from "./helpCenter/HelpCenterAdminSection";
 import { HelpAssistantPanel } from "./help/HelpAssistantPanel";
@@ -79,6 +80,7 @@ const SECTION_LABELS: Record<AppSection, string> = {
   starter_packs: "Starter packs",
   system_reference_library: "Reference library (system)",
   system_help_center: "Help Center (system)",
+  system_platform_admin: "Platform Admin",
 };
 
 /** Core personal areas — always shown for every signed-in user. */
@@ -127,6 +129,7 @@ const WORKSPACE_ADMIN_NAV: { id: AppSection; label: string }[] = [
 const SYSTEM_PLATFORM_NAV: { id: AppSection; label: string }[] = [
   { id: "system_reference_library", label: "Reference library" },
   { id: "system_help_center", label: "Help Center" },
+  { id: "system_platform_admin", label: "Platform Admin" },
 ];
 
 /** Sections that require company admin or learning lead */
@@ -140,6 +143,7 @@ const ELEVATED_SECTION_IDS: AppSection[] = [
   "starter_packs",
   "system_reference_library",
   "system_help_center",
+  "system_platform_admin",
 ];
 
 function ManagementAccessRestricted() {
@@ -476,7 +480,9 @@ export default function MyDashboard({ userEmail }: Props) {
     if (canAccessManagementNav) return;
     setActiveSection((prev) => {
       if (
-        (prev === "system_reference_library" || prev === "system_help_center") &&
+        (prev === "system_reference_library" ||
+          prev === "system_help_center" ||
+          prev === "system_platform_admin") &&
         canAccessSystemReferenceLibrary
       ) {
         return prev;
@@ -494,7 +500,8 @@ export default function MyDashboard({ userEmail }: Props) {
     if (workspace.loading) return;
     if (
       activeSection !== "system_reference_library" &&
-      activeSection !== "system_help_center"
+      activeSection !== "system_help_center" &&
+      activeSection !== "system_platform_admin"
     ) {
       return;
     }
@@ -508,7 +515,8 @@ export default function MyDashboard({ userEmail }: Props) {
 
   const isSystemAdminSection =
     activeSection === "system_reference_library" ||
-    activeSection === "system_help_center";
+    activeSection === "system_help_center" ||
+    activeSection === "system_platform_admin";
 
   const showRestrictedManagementView =
     (isSystemAdminSection && !canAccessSystemReferenceLibrary) ||
@@ -1010,6 +1018,16 @@ export default function MyDashboard({ userEmail }: Props) {
                 ) : canAccessSystemReferenceLibrary ? (
                   <HelpCenterAdminSection
                     isActive={activeSection === "system_help_center"}
+                  />
+                ) : null}
+              </div>
+              <div hidden={activeSection !== "system_platform_admin"}>
+                {showRestrictedManagementView &&
+                activeSection === "system_platform_admin" ? (
+                  <ManagementAccessRestricted />
+                ) : canAccessSystemReferenceLibrary ? (
+                  <SystemPlatformAdminSection
+                    isActive={activeSection === "system_platform_admin"}
                   />
                 ) : null}
               </div>

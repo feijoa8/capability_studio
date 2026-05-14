@@ -385,7 +385,8 @@ export type AppSection =
   | "company_profile"
   | "starter_packs"
   | "system_reference_library"
-  | "system_help_center";
+  | "system_help_center"
+  | "system_platform_admin";
 
 /** One row per organisation — workspace company context for UX / AI interpretation */
 export type OrganisationProfileRow = {

@@ -22,6 +22,7 @@ export const APP_SECTION_TO_PAGE_KEY: Partial<Record<AppSection, string>> = {
   starter_packs: "starter_packs",
   system_reference_library: "system_reference_library",
   system_help_center: "system_help_center",
+  system_platform_admin: "system_platform_admin",
 };
 
 export function pageKeyFromAppSection(section: AppSection): string {
@@ -50,6 +51,7 @@ export const PAGE_CONTEXT_LABELS: Record<string, string> = {
   starter_packs: "Starter packs",
   system_reference_library: "Reference library (system)",
   system_help_center: "Help Center (system)",
+  system_platform_admin: "Platform Admin",
 };
 
 export function pageContextLabel(pageKey: string): string {
