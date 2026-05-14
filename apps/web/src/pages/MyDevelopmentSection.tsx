@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { DevelopmentBacklogBoard } from "./DevelopmentBacklogBoard";
 import { DevelopmentPlansPanel } from "./DevelopmentPlansPanel";
 import styles from "./MyDevelopmentSection.module.css";
 import type {
@@ -100,6 +101,10 @@ export function MyDevelopmentSection({
   const [personalItems, setPersonalItems] = useState<DevelopmentFocusItemRow[]>(
     []
   );
+  /** Portable `development_focus_items` (organisation_id null); shown on workspace My Development. */
+  const [portableFocusItems, setPortableFocusItems] = useState<
+    DevelopmentFocusItemRow[]
+  >([]);
   const [personalAddTitle, setPersonalAddTitle] = useState("");
   const [personalAddDesc, setPersonalAddDesc] = useState("");
   const [personalSaving, setPersonalSaving] = useState(false);
@@ -206,7 +211,22 @@ export function MyDevelopmentSection({
     }
     const uid = user.id;
     setCurrentUserId(uid);
-    await fetchGoals(activeOrgId, uid);
+    setPortableFocusItems([]);
+    await Promise.all([
+      fetchGoals(activeOrgId, uid),
+      (async () => {
+        try {
+          const rows = await listPersonalDevelopmentFocusItems();
+          setPortableFocusItems(rows);
+        } catch (e) {
+          console.warn(
+            "listPersonalDevelopmentFocusItems:",
+            e instanceof Error ? e.message : String(e),
+          );
+          setPortableFocusItems([]);
+        }
+      })(),
+    ]);
     setLoading(false);
   }, [isActive, activeOrgId, primaryAccountType, fetchGoals]);
 
@@ -1247,6 +1267,29 @@ export function MyDevelopmentSection({
           <p style={{ ...muted, margin: 0, fontSize: 13 }}>Loading goals…</p>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+            {currentUserId && activeOrgId ? (
+              <div>
+                <p
+                  style={{
+                    margin: "0 0 8px",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                    color: mutedColor,
+                  }}
+                >
+                  Personal backlog &amp; Kanban
+                </p>
+                <DevelopmentBacklogBoard
+                  items={portableFocusItems}
+                  setItems={setPortableFocusItems}
+                  setLoadError={setLoadError}
+                  addBlurb="Portable items you own (not tied to this workspace). They stay on your account when you switch organisations. Workspace career-linked backlog and active goals are in the sections below."
+                />
+              </div>
+            ) : null}
+
             <div>
               <p
                 style={{
@@ -1258,7 +1301,7 @@ export function MyDevelopmentSection({
                   color: mutedColor,
                 }}
               >
-                Backlog
+                Workspace backlog
               </p>
               {backlogGoals.length === 0 ? (
                 <div style={card}>

@@ -38,3 +38,14 @@
   box-sizing: border-box;
 }
 
+.backlogBoardRoot {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.kanbanScroll {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
