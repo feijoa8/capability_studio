@@ -3,9 +3,13 @@
   "name": "capability-studio-landing",
   "compatibility_date": "2026-05-13",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
-  // OpenNext writes `_worker.js`, server bundles, and `assets/` (with `_next/` inside).
-  // Pages must serve `/_next/static/...` from the output root; `prepare-pages-static.mjs`
-  // copies `assets/_next` (and optional `brand`, `_headers`) up into `.open-next/`.
+  // OpenNext writes `worker.js`, server bundles, and `assets/` (with `_next/` inside).
+  // `npm run pages:build` copies `worker.js` → `_worker.js`, runs `prepare-pages-static.mjs`:
+  //   - Hoists `assets/_next` and `assets/brand` to `.open-next/` so URLs match HTML (`/_next/...`).
+  //   - Writes `_routes.json` so `/_next/static/*` and `/brand/*` bypass the worker (required
+  //     on Cloudflare Pages: otherwise every request hits `_worker.js` and static assets 404).
+  // Cloudflare: root directory should be `apps/landing`; build command `npm run pages:build`;
+  // if the repo root is the Pages root instead, set build output to `apps/landing/.open-next`.
   "pages_build_output_dir": ".open-next",
 
   // --- Public vars only (no Supabase service role, API secrets, or private keys) ---
@@ -29,9 +33,9 @@
   // `env.preview` / `env.production` `vars` overrides per:
   // https://developers.cloudflare.com/pages/functions/wrangler-configuration/
   "vars": {
-    "NEXT_PUBLIC_SUPABASE_URL": "https://iysonuvddztuznrjhhzh.supabase.co",
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_fkUsdYNknEfKBRZ5wHVgzQ_JMmbt2e2",
-    "NEXT_PUBLIC_APP_URL": "https://capability-studio.pages.dev",
-    "NEXT_PUBLIC_SITE_URL": "https://capability-studio-landing.pages.dev"
+    "NEXT_PUBLIC_SUPABASE_URL": "https://YOUR_PROJECT_REF.supabase.co",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "REPLACE_WITH_SUPABASE_ANON_KEY",
+    "NEXT_PUBLIC_APP_URL": "https://YOUR_PRODUCTION_APP_ORIGIN.example",
+    "NEXT_PUBLIC_SITE_URL": "https://YOUR_LANDING_PAGES_HOST.example"
   }
 }
