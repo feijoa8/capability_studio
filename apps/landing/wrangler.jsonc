@@ -29,9 +29,9 @@
   // `env.preview` / `env.production` `vars` overrides per:
   // https://developers.cloudflare.com/pages/functions/wrangler-configuration/
   "vars": {
-    "NEXT_PUBLIC_SUPABASE_URL": "https://YOUR_PROJECT_REF.supabase.co",
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "REPLACE_WITH_SUPABASE_ANON_KEY",
-    "NEXT_PUBLIC_APP_URL": "https://YOUR_PRODUCTION_APP_ORIGIN.example",
-    "NEXT_PUBLIC_SITE_URL": "https://YOUR_LANDING_PAGES_HOST.example"
+    "NEXT_PUBLIC_SUPABASE_URL": "https://iysonuvddztuznrjhhzh.supabase.co",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_fkUsdYNknEfKBRZ5wHVgzQ_JMmbt2e2",
+    "NEXT_PUBLIC_APP_URL": "https://capability-studio.pages.dev",
+    "NEXT_PUBLIC_SITE_URL": "https://capability-studio-landing.pages.dev"
   }
 }
